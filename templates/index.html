@@ -1,44 +1,87 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hermes DL</title>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermes DL</title>
 <style>
-:root{font-family:Inter,Segoe UI,Arial,sans-serif;background:#0b1020;color:#eef2ff}*{box-sizing:border-box}
-body{margin:0;background:linear-gradient(135deg,#0b1020,#151d35);min-height:100vh}.wrap{max-width:1250px;margin:auto;padding:28px}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}h1,h2{margin:0}.muted{color:#98a5c4}
-.grid{display:grid;grid-template-columns:310px 1fr;gap:18px}.card{background:#151e34;border:1px solid #2a3554;border-radius:16px;padding:18px;box-shadow:0 14px 40px #0005}
-input,textarea{width:100%;padding:11px;border:1px solid #33405f;border-radius:10px;background:#0e162a;color:#eef2ff;font:inherit}textarea{min-height:180px}
-label{display:block;font-size:12px;color:#aab5cf;margin:12px 0 6px}.btn{border:0;border-radius:10px;padding:10px 13px;background:#293653;color:#fff;cursor:pointer}.primary{background:#5c6cff}.good{background:#20895b}.warn{background:#a75f20}
-.row{display:flex;gap:8px;flex-wrap:wrap}.pill{padding:7px 10px;background:#202a45;border-radius:999px;font-size:12px}.project{padding:11px;border-radius:10px;display:flex;justify-content:space-between;cursor:pointer}.project:hover,.project.active{background:#202a45}
-.bar{height:7px;background:#0a1020;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:#6977ff}.stats{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
-table{width:100%;border-collapse:collapse}.item td{padding:12px 8px;border-bottom:1px solid #27314d}.file{font-weight:650}.small{font-size:12px}.status{font-size:12px}.complete{color:#64dfa0}.queued{color:#f5cc61}.ready{color:#8fa5ff}.partial,.missing{color:#ffb06e}.error{color:#ff7186}
-.toast{position:fixed;right:18px;bottom:18px;background:#202b47;border:1px solid #354366;padding:12px 15px;border-radius:10px;display:none}
-@media(max-width:800px){.grid{grid-template-columns:1fr}}
-</style></head>
-<body><div class="wrap">
-<div class="top"><div><h1>Hermes DL</h1><div class="muted">IDM Queue Studio</div></div><div id="idm" class="pill">Checking…</div></div>
-<div class="grid"><aside class="card"><button class="btn primary" style="width:100%" onclick="newQueue()">＋ New Queue</button><div id="projects" style="margin-top:14px"></div></aside>
-<main class="card"><div id="editor"></div></main></div></div><div id="toast" class="toast"></div>
+:root{font-family:Inter,Segoe UI,system-ui,sans-serif;background:#0a0f1c;color:#edf2ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#182544 0,#0a0f1c 55%)}
+.app{max-width:1280px;margin:auto;padding:26px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.brand{display:flex;gap:12px;align-items:center}.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#6675ff,#8c5cff);display:grid;place-items:center;font-weight:900}
+h1{font-size:25px;margin:0}.sub{font-size:12px;color:#8e9ab8}.grid{display:grid;grid-template-columns:300px 1fr;gap:18px}
+.card{background:#121a2cdd;border:1px solid #273451;border-radius:17px;padding:17px;box-shadow:0 20px 50px #0005}
+.btn{border:0;border-radius:10px;padding:10px 13px;background:#25314d;color:#f4f7ff;cursor:pointer;font-weight:650}.btn:hover{filter:brightness(1.12)}.primary{background:#5d70ff}.good{background:#1e8b5a}.warn{background:#9e5d24}
+.field{margin-top:12px}.field label{display:block;font-size:11px;color:#9eabc7;margin-bottom:6px}
+input,textarea{width:100%;border:1px solid #30405f;background:#0c1324;color:#eef3ff;border-radius:10px;padding:11px;font:inherit}textarea{min-height:180px;resize:vertical}
+label{font-size:11px;color:#9eabc7}.projects{margin-top:13px}.project{padding:11px;border-radius:10px;display:flex;justify-content:space-between;gap:8px;cursor:pointer}.project:hover,.project.active{background:#1e2942}
+.pill{padding:7px 10px;border-radius:999px;background:#1d2842;font-size:11px;color:#aab7d3}.stats{display:flex;gap:7px;flex-wrap:wrap;margin:14px 0}
+.bar{height:7px;background:#090f1b;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;background:#7080ff}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.item td{border-bottom:1px solid #232e48;padding:11px 8px}table{width:100%;border-collapse:collapse}
+.file{font-weight:700}.small{font-size:11px;color:#8e9ab8}.status{font-size:11px;text-transform:capitalize}.complete{color:#61e19e}.queued{color:#f5d067}.ready{color:#8da0ff}.missing,.partial{color:#ffaf72}.error{color:#ff778a}
+.check{width:17px;height:17px}.section-title{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7f8baa;margin:22px 0 9px}
+.empty{text-align:center;padding:60px 15px;color:#8390ad}.toast{position:fixed;right:18px;bottom:18px;background:#1d2943;border:1px solid #354366;border-radius:11px;padding:12px 14px;display:none}
+.switch{display:flex;align-items:center;gap:8px;font-size:12px;color:#aab5cd;margin-top:10px}.switch input{width:auto}
+.library-set{padding:9px;border:1px solid #273451;border-radius:10px;margin-top:7px}
+@media(max-width:850px){.grid{grid-template-columns:1fr}.app{padding:15px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="brand"><div class="logo">H</div><div><h1>Hermes DL</h1><div class="sub">Local IDM queue manager</div></div></div>
+    <div id="idm" class="pill">Checking IDM…</div>
+  </div>
+  <div class="grid">
+    <aside class="card">
+      <button class="btn primary" style="width:100%" onclick="newQueue()">＋ New download queue</button>
+      <div class="section-title">Queues</div>
+      <div id="projects" class="projects"></div>
+      <div class="section-title">Backup library</div>
+      <div class="field"><input id="libraryRoot" value="D:\JB PS5 Backups"></div>
+      <div class="toolbar"><button class="btn" onclick="scanLibrary()">Scan library</button><button class="btn" onclick="createLibraryFolder()">New folder</button></div>
+      <div id="library" class="small"></div>
+    </aside>
+    <main class="card"><div id="editor"></div></main>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
 <script>
 let projects={},current=null;
-const $=x=>document.getElementById(x);
+const $=id=>document.getElementById(id);
 const esc=x=>String(x??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function api(u,o={}){const r=await fetch(u,{headers:{'Content-Type':'application/json'},...o});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
-function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>{$('toast').style.display='none'},2500)}
-function newQueue(){current=null;renderEditor({name:'New Queue',folder:'D:\\\\JB PS5 Backups',items:[]},true)}
-function renderProjects(){$('projects').innerHTML=Object.values(projects).sort((a,b)=>(b.created||0)-(a.created||0)).map(p=>{let d=p.items.filter(x=>x.status==='complete').length;let pc=p.items.length?Math.round(d/p.items.length*100):0;return '<div class="project '+(current&&current.id===p.id?'active':'')+'" onclick="loadProject(\''+p.id+'\')"><div><b>'+esc(p.name)+'</b><div class="small muted">'+p.items.length+' files</div></div><div class="small">'+pc+'%</div></div>'}).join('')||'<div class="small muted" style="padding:15px">No queues yet.</div>'}
-function renderEditor(p,isNew){if(isNew){$('editor').innerHTML='<h2>Create queue</h2><label>Queue name</label><input id="name" value="PS5 Backup"><label>Destination folder</label><input id="folder" value="D:\\\\JB PS5 Backups"><label>URLs</label><textarea id="links" placeholder="Paste the complete list of links here…"></textarea><div class="row" style="margin-top:12px"><button class="btn primary" onclick="createQueue()">Create checklist</button></div>';return}
-let done=p.items.filter(x=>x.status==='complete').length,total=p.items.length,pct=total?Math.round(done/total*100):0;
-let rows=p.items.map(x=>'<tr class="item"><td><input type="checkbox" class="check" data-id="'+x.id+'" '+(x.status==='complete'?'disabled':'')+'></td><td><div class="file">'+esc(x.filename)+'</div><div class="small muted">'+(x.part?'Part '+x.part+' · ':'')+esc(x.message||'')+'</div></td><td class="status '+esc(x.status)+'">'+esc(x.status)+'</td><td class="small muted">'+(x.remote_size?fmt(x.remote_size):'')+'</td></tr>').join('');
-$('editor').innerHTML='<div class="top"><div><h2>'+esc(p.name)+'</h2><div class="small muted">'+esc(p.folder||'No folder')+'</div></div><div class="row"><button class="btn" onclick="scan()">↻ Scan</button><button class="btn" onclick="openFolder()">Open folder</button></div></div><div class="stats"><span class="pill">'+done+'/'+total+' complete</span><span class="pill">'+p.items.filter(x=>x.status==='queued').length+' queued</span><span class="pill">'+p.items.filter(x=>x.status==='missing'||x.status==='partial').length+' need download</span></div><div class="bar"><i style="width:'+pct+'%"></i></div><div class="row" style="margin:16px 0"><button class="btn primary" onclick="resolveMissing()">Resolve missing</button><button class="btn good" onclick="queueReady()">Queue selected / missing</button><button class="btn warn" onclick="startQueue()">▶ Start IDM queue</button><button class="btn" onclick="deleteQueue()">Delete</button></div><div style="overflow:auto"><table><tbody>'+rows+'</tbody></table></div>'}
-function fmt(n){let u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
-function ids(){return [...document.querySelectorAll('.check:checked')].map(x=>x.dataset.id)}
-async function init(){let c=await api('/api/config');projects=c.projects||{};$('idm').textContent=c.idm?'IDM detected':'IDM not found';renderProjects();let a=Object.values(projects)[0];a?loadProject(a.id):renderEditor({},true)}
-async function createQueue(){try{let p=await api('/api/projects',{method:'POST',body:JSON.stringify({name:$('name').value,folder:$('folder').value,links:$('links').value})});projects[p.id]=p;await loadProject(p.id);toast('Checklist created')}catch(e){toast(e.message)}}
-async function loadProject(id){current=await api('/api/projects/'+id);renderProjects();renderEditor(current,false)}
-async function scan(){try{current=await api('/api/projects/'+current.id+'/scan',{method:'POST'});projects[current.id]=current;renderProjects();renderEditor(current,false)}catch(e){toast(e.message)}}
-async function resolveMissing(){try{let selected=ids();current=await api('/api/projects/'+current.id+'/resolve',{method:'POST',body:JSON.stringify({ids:selected,mode:'auto'})});projects[current.id]=current;renderEditor(current,false);toast('Resolution finished')}catch(e){toast(e.message)}}
-async function queueReady(){try{let selected=ids();let d=await api('/api/projects/'+current.id+'/queue',{method:'POST',body:JSON.stringify({ids:selected})});current=d.project;projects[current.id]=current;renderEditor(current,false);toast('Added to IDM')}catch(e){toast(e.message)}}
+async function api(url,opt={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opt});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
+function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>{$('toast').style.display='none'},2600)}
+function newQueue(){current=null;renderEditor(true);renderProjects()}
+function renderProjects(){$('projects').innerHTML=Object.values(projects).sort((a,b)=>(b.created||0)-(a.created||0)).map(p=>{const d=p.items.filter(x=>x.status==='complete').length,pc=p.items.length?Math.round(d/p.items.length*100):0;return '<div class="project '+(current&&current.id===p.id?'active':'')+'" onclick="loadProject(\''+p.id+'\')"><div><b>'+esc(p.name)+'</b><div class="small">'+p.items.length+' parts</div></div><span class="small">'+pc+'%</span></div>'}).join('')||'<div class="small">No queues yet.</div>'}
+function renderEditor(isNew){
+ if(isNew){$('editor').innerHTML='<h2>New download queue</h2><div class="sub" style="margin-top:4px">Turn a whole link list into a persistent checklist.</div>'+
+ '<div class="field"><label>Queue / game name</label><input id="name" value="PS5 Backup"></div>'+
+ '<div class="field"><label>Backup root</label><input id="root" value="D:\\JB PS5 Backups"></div>'+
+ '<label class="switch"><input id="autoFolder" type="checkbox" checked> Automatically create a clean folder for this queue</label>'+
+ '<div class="field"><label>Destination when auto folder is off</label><input id="folder" value="D:\\JB PS5 Backups"></div>'+
+ '<div class="field"><label>Links</label><textarea id="links" placeholder="Paste 1 URL per line. A complete batch is fine."></textarea></div>'+
+ '<div class="toolbar"><button class="btn primary" onclick="createQueue()">Create checklist</button></div>';return}
+ const p=current,done=p.items.filter(x=>x.status==='complete').length,total=p.items.length,pct=total?Math.round(done/total*100):0;
+ const rows=p.items.map(x=>'<tr class="item"><td><input class="check" type="checkbox" data-id="'+x.id+'" '+(x.status==='complete'?'disabled':'')+'></td><td><div class="file">'+esc(x.filename)+'</div><div class="small">'+(x.part?'Part '+x.part+' · ':'')+esc(x.message||'')+'</div></td><td class="status '+esc(x.status)+'">'+esc(x.status)+'</td><td class="small">'+(x.remote_size?fmt(x.remote_size):'')+'</td></tr>').join('');
+ $('editor').innerHTML='<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h2>'+esc(p.name)+'</h2><div class="sub" style="margin-top:4px">'+esc(p.folder||'No destination')+'</div></div><div class="toolbar" style="margin:0"><button class="btn" onclick="scan()">↻ Scan</button><button class="btn" onclick="openFolder()">Open</button></div></div>'+
+ '<div class="stats"><span class="pill">'+done+'/'+total+' complete</span><span class="pill">'+p.items.filter(x=>x.status==='queued').length+' queued</span><span class="pill">'+p.items.filter(x=>x.status==='ready').length+' ready</span><span class="pill">'+p.items.filter(x=>x.status==='missing'||x.status==='partial').length+' missing</span></div>'+
+ '<div class="bar"><i style="width:'+pct+'%"></i></div><div class="toolbar"><button class="btn primary" onclick="resolveMissing()">Resolve selected / missing</button><button class="btn good" onclick="queueReady()">Queue selected</button><button class="btn warn" onclick="startQueue()">▶ Start IDM</button><button class="btn" onclick="deleteQueue()">Delete</button></div>'+
+ '<div style="overflow:auto"><table><tbody>'+rows+'</tbody></table></div>'
+}
+function fmt(n){const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<4){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
+function selected(){return [...document.querySelectorAll('.check:checked')].map(x=>x.dataset.id)}
+async function init(){const c=await api('/api/config');projects=c.projects||{};$('idm').textContent=c.idm?'IDM detected':'IDM not found';renderProjects();const p=Object.values(projects)[0];if(p)await loadProject(p.id);else renderEditor(true)}
+async function createQueue(){try{const name=$('name').value.trim()||'PS5 Backup',root=$('root').value.trim(),auto=$('autoFolder').checked,folder=$('folder').value.trim();const p=await api('/api/projects',{method:'POST',body:JSON.stringify({name,root,auto_folder:auto,folder,links:$('links').value})});projects[p.id]=p;await loadProject(p.id);toast('Checklist created')}catch(e){toast(e.message)}}
+async function loadProject(id){current=await api('/api/projects/'+id);renderProjects();renderEditor(false)}
+async function scan(){try{current=await api('/api/projects/'+current.id+'/scan',{method:'POST'});projects[current.id]=current;renderProjects();renderEditor(false)}catch(e){toast(e.message)}}
+async function resolveMissing(){try{const s=selected();current=await api('/api/projects/'+current.id+'/resolve',{method:'POST',body:JSON.stringify({ids:s,mode:'auto'})});projects[current.id]=current;renderEditor(false);toast('Resolution finished')}catch(e){toast(e.message)}}
+async function queueReady(){try{const s=selected();const d=await api('/api/projects/'+current.id+'/queue',{method:'POST',body:JSON.stringify({ids:s})});current=d.project;projects[current.id]=current;renderEditor(false);toast('Added to IDM')}catch(e){toast(e.message)}}
 async function startQueue(){try{await api('/api/projects/'+current.id+'/start',{method:'POST'});toast('IDM queue started')}catch(e){toast(e.message)}}
 async function openFolder(){try{await api('/api/projects/'+current.id+'/open-folder',{method:'POST'})}catch(e){toast(e.message)}}
-async function deleteQueue(){if(!confirm('Delete this queue?'))return;await api('/api/projects/'+current.id,{method:'DELETE'});delete projects[current.id];current=null;renderProjects();renderEditor({},true)}
-init().catch(e=>toast(e.message));setInterval(()=>{if(current)scan().catch(()=>{})},10000);
-</script></body></html>
+async function deleteQueue(){if(!confirm('Delete this queue?'))return;await api('/api/projects/'+current.id,{method:'DELETE'});delete projects[current.id];current=null;renderProjects();renderEditor(true)}
+async function scanLibrary(){try{const root=$('libraryRoot').value.trim(),d=await api('/api/library/scan?root='+encodeURIComponent(root));$('library').innerHTML='<div><b>'+d.folders.length+'</b> folders · <b>'+d.sets.length+'</b> multipart sets</div>'+d.sets.slice(0,8).map(s=>'<div class="library-set"><b>'+esc(s.name)+'</b><br><span class="small">'+s.count+' part(s) · '+fmt(s.total_bytes)+'</span></div>').join('');toast('Library scanned')}catch(e){toast(e.message)}}
+async function createLibraryFolder(){const root=$('libraryRoot').value.trim(),name=prompt('Folder name');if(!name)return;try{const d=await api('/api/library/folder',{method:'POST',body:JSON.stringify({root,name})});toast('Created '+d.path);scanLibrary()}catch(e){toast(e.message)}}
+init().catch(e=>toast(e.message));setInterval(()=>{if(current)scan().catch(()=>{})},12000);
+</script>
+</body></html>

@@ -215,6 +215,67 @@ def index():
     return render_template("index.html")
 
 
+
+def safe_folder_name(name: str) -> str:
+    name = re.sub(r'[<>:"/\\\\|?*]+', " ", (name or "").strip())
+    name = re.sub(r"\\s+", " ", name).strip().strip(".")
+    return name[:120] or "Untitled Download"
+
+
+def scan_library(root: str):
+    if not root:
+        raise ValueError("Root folder is required")
+    base = Path(root).expanduser()
+    if not base.exists():
+        return {"root": str(base), "folders": [], "sets": []}
+
+    folders = []
+    sets = {}
+    try:
+        for child in base.iterdir():
+            if child.is_dir():
+                folders.append({"name": child.name, "path": str(child)})
+    except OSError:
+        pass
+
+    locations = [base] + [Path(x["path"]) for x in folders]
+    for folder in locations:
+        try:
+            for f in folder.iterdir():
+                if not f.is_file():
+                    continue
+                m = PART_RE.search(f.name)
+                if not m:
+                    continue
+                prefix = f.name[:m.start()]
+                key = f"{folder.resolve()}::{prefix}"
+                entry = sets.setdefault(key, {
+                    "folder": str(folder),
+                    "name": prefix.rstrip(". -_") or folder.name,
+                    "parts": [],
+                    "count": 0,
+                    "total_bytes": 0,
+                })
+                entry["parts"].append(f.name)
+                entry["count"] += 1
+                try:
+                    entry["total_bytes"] += f.stat().st_size
+                except OSError:
+                    pass
+        except OSError:
+            continue
+
+    for entry in sets.values():
+        entry["parts"].sort(key=lambda n: (
+            part_number(n) if part_number(n) is not None else 999999, n.lower()
+        ))
+    return {
+        "root": str(base),
+        "folders": sorted(folders, key=lambda x: x["name"].lower()),
+        "sets": list(sets.values())
+    }
+
+
 @app.get("/api/config")
 def config():
     return jsonify({
@@ -224,11 +285,40 @@ def config():
     })
 
 
+
+@app.get("/api/library/scan")
+def library_scan():
+    root = (request.args.get("root") or "").strip()
+    try:
+        return jsonify(scan_library(root))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.post("/api/library/folder")
+def library_folder():
+    data = request.get_json(force=True) or {}
+    root = (data.get("root") or "").strip()
+    name = safe_folder_name(data.get("name") or "")
+    if not root:
+        return jsonify({"error": "Root folder is required"}), 400
+    target = Path(root).expanduser() / name
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return jsonify({"ok": True, "path": str(target)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 @app.post("/api/projects")
 def create_project():
     data = request.get_json(force=True) or {}
     name = (data.get("name") or "Untitled Queue").strip()
     folder = (data.get("folder") or "").strip()
+    if data.get("auto_folder"):
+        root = (data.get("root") or r"D:\JB PS5 Backups").strip()
+        folder = str(Path(root).expanduser() / safe_folder_name(name))
+        Path(folder).mkdir(parents=True, exist_ok=True)
     links = normalize_links(data.get("links") or "")
     if not links:
         return jsonify({"error": "No URLs found."}), 400

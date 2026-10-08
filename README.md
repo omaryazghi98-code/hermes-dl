@@ -1,28 +1,105 @@
-# IDM Queue Studio
+# Hermes DL
 
-A local Windows web app for turning batches of file-page URLs into a visual download checklist and queueing the missing items in Internet Download Manager.
+Hermes DL is now a local Windows download organizer for large PS5/game archives.
 
-## Features
+It watches an IDM staging folder, groups multipart RAR sets, waits for the set to stop changing, tests the archive with WinRAR, resolves PS5 PPSA title IDs with Crawl4AI, downloads a cover, and extracts each game into its own folder.
 
-- Paste a whole block of links at once.
-- Extracts filenames and part numbers automatically.
-- Saves multiple queues/projects locally.
-- Rechecks the destination folder and marks already-present parts.
-- Resolves MediaFire pages to direct download URLs when possible.
-- Browser fallback powered by Playwright for pages where plain HTTP resolution fails.
-- Sends downloads to IDM using its documented command-line integration (`/a`, `/p`, `/f`).
-- Starts the IDM scheduler/queue using `/s`.
+## Default layout
 
-## Run
+```
+D:\
+├── _TEMP\
+│   ├── IDM\
+│   └── RAR\
+├── _Automation\
+│   └── IDM-AutoExtract\
+├── _INBOX\
+└── PS5\
+    └── Games\
+        └── Incoming\
+```
 
-Double-click `start.bat`.
+The watcher and extracted metadata stay outside the IDM/RAR staging folders. The RAR staging directory is reserved for archive work/WinRAR temporary files, not the watcher itself.
 
-The first run creates `.venv`, installs the dependencies, and installs Chromium for the browser resolver. The app then opens at `http://127.0.0.1:8765`.
+## What the watcher does
 
-## IDM
+For a set such as:
 
-IDM should be installed normally. The app searches the standard Windows IDM locations for `IDMan.exe`.
+```
+[DLPSGAME.COM]-PPSA22327.part01.rar
+[DLPSGAME.COM]-PPSA22327.part02.rar
+...
+[DLPSGAME.COM]-PPSA22327.part20.rar
+```
 
-## Notes
+Hermes groups the parts together using the archive base name, waits for the files to become stable, then runs a WinRAR integrity test against the root archive.
 
-The app itself does not extract RAR archives. It manages the checklist and hands the actual downloads to IDM. MediaFire may still require a logged-in browser or other anti-abuse checks; the browser resolver is intended to cover the normal JavaScript-rendered download page, not bypass access controls.
+Only a successful WinRAR test is allowed to proceed to extraction.
+
+For a detected PPSA, Hermes uses Crawl4AI to crawl the corresponding SerialStation title page, extracts the game title, searches for a cover through a Crawl4AI browser crawl of Bing Images, and caches the result under:
+
+```
+D:\_Automation\IDM-AutoExtract\covers\
+```
+
+The final game folder becomes:
+
+```
+D:\PS5\Games\Incoming\Game Name [PPSAxxxxx]\
+├── cover.jpg / cover.png / cover.webp
+├── metadata.json
+├── .hermes-complete
+└── extracted game contents...
+```
+
+If a PPSA cannot be resolved, the archive is still handled, but it falls back to:
+
+```
+D:\_INBOX\
+```
+
+## Installation
+
+Run:
+
+```
+start.bat
+```
+
+The first run creates a Python virtual environment, installs the pinned Crawl4AI release, and installs its browser dependencies.
+
+Crawl4AI's current open-source release used here is v0.9.4.
+
+## WinRAR
+
+Hermes searches the standard Windows WinRAR installation locations and passes its temporary work directory as:
+
+```
+D:\_TEMP\RAR
+```
+
+so the system drive is not used as the archive workspace.
+
+## Important
+
+Hermes deliberately does **not** delete source archives after extraction. This is intentional: completed archives remain available until you verify the extracted result.
+
+It also keeps failed/incomplete multipart sets in the IDM staging folder and retries them when the set changes or the retry window expires.
+
+## UI
+
+Open:
+
+```
+http://127.0.0.1:8765
+```
+
+The dashboard shows:
+
+- watcher status
+- WinRAR / Crawl4AI status
+- staging paths
+- recent archive jobs
+- activity log
+- manual PPSA resolver
+- manual scan/start/stop controls

@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import webbrowser
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -381,6 +382,91 @@ def extract_archive(group: ArchiveGroup, destination: Path) -> tuple[bool, str]:
     return False, details[-1600:]
 
 
+def extract_page_title(page_html: str, ppsa: str) -> str | None:
+    candidates = [
+        extract_meta_content(page_html, "og:title"),
+        extract_meta_content(page_html, "twitter:title"),
+        html_h1(page_html),
+    ]
+
+    title_tag = re.search(
+        r"<title[^>]*>\s*(.*?)\s*</title>",
+        page_html or "",
+        flags=re.I | re.S,
+    )
+    if title_tag:
+        candidates.append(
+            html.unescape(re.sub(r"<[^>]+>", " ", title_tag.group(1))).strip()
+        )
+
+    for candidate in candidates:
+        value = re.sub(r"\s+", " ", html.unescape(candidate or "")).strip()
+        if not value:
+            continue
+        if "javascript is required" in value.lower():
+            continue
+        if "playstation 5 game update database" in value.lower():
+            continue
+        if "404" in value.lower() and "not found" in value.lower():
+            continue
+
+        value = re.sub(
+            rf"\s*[:\-|–—]\s*{re.escape(ppsa)}\b",
+            "",
+            value,
+            flags=re.I,
+        )
+        value = re.sub(
+            r"\s*[\|\-–—]\s*PROSPERO[Pp]atches\.com.*$",
+            "",
+            value,
+            flags=re.I,
+        )
+        value = value.replace(ppsa, "").strip(" :-|–—")
+        value = safe_name(value)
+        if value and value != ppsa:
+            return value
+
+    return None
+
+
+def extract_page_image(page_html: str) -> str | None:
+    for key in ("og:image", "twitter:image", "twitter:image:src"):
+        candidate = extract_meta_content(page_html, key)
+        if candidate and candidate.startswith(("http://", "https://")):
+            if not re.search(
+                r"logo|favicon|icon|avatar|sprite|banner|tracking",
+                candidate,
+                re.I,
+            ):
+                return candidate
+    return None
+
+
+def resolve_prosperopatches_http(
+    ppsa: str,
+) -> tuple[str | None, str | None, str]:
+    url = prosperopatches_url(ppsa)
+
+    response = requests.get(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/154 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    page_html = response.text or ""
+    title = extract_page_title(page_html, ppsa)
+    cover = extract_page_image(page_html)
+    return title, cover, url
+
+
 async def crawl_page(url: str) -> Any:
     if not CRAWL4AI_AVAILABLE:
         raise RuntimeError("Crawl4AI is not installed.")
@@ -481,8 +567,22 @@ def choose_prosperopatches_image(page_html: str, media_images: list[Any]) -> str
 
 
 def resolve_title_with_crawl4ai(ppsa: str) -> tuple[str | None, str | None, str | None]:
-    # ProsperoPatches is the authoritative source for PPSA metadata.
+    # ProsperoPatches is authoritative for a PPSA. Try its canonical page directly
+    # first; only fall back to a browser crawl if the normal HTTP response does not
+    # expose the metadata.
     url = prosperopatches_url(ppsa)
+
+    try:
+        title, cover, _ = resolve_prosperopatches_http(ppsa)
+        if title or cover:
+            return title, cover, url
+    except Exception as exc:
+        activity(
+            "ProsperoPatches HTTP lookup failed for "
+            + ppsa
+            + ": "
+            + str(exc)
+        )
 
     if not CRAWL4AI_AVAILABLE:
         return None, None, url
@@ -492,43 +592,32 @@ def resolve_title_with_crawl4ai(ppsa: str) -> tuple[str | None, str | None, str 
         page_html = getattr(result, "html", "") or ""
         markdown = getattr(result, "markdown", "") or ""
 
-        title = (
-            extract_meta_content(page_html, "og:title")
-            or extract_meta_content(page_html, "twitter:title")
-            or html_h1(page_html)
-        )
-
-        if title:
-            title = re.sub(
-                r"\s*[\|\-–—]\s*ProsperoPatches.*$",
-                "",
-                html.unescape(title),
-                flags=re.I,
-            ).strip()
+        title = extract_page_title(page_html, ppsa)
 
         if not title:
             for line in [line.strip() for line in markdown.splitlines()]:
-                if line.startswith("# ") and not PPSA_RE.search(line):
-                    title = line[2:].strip()
-                    break
-
-        title = safe_name(title) if title else None
+                if line.startswith("# "):
+                    candidate = safe_name(line[2:].strip())
+                    if candidate and candidate.upper() != ppsa:
+                        title = candidate
+                        break
 
         media = getattr(result, "media", None) or {}
         images = media.get("images", []) if isinstance(media, dict) else []
-        cover_url = choose_prosperopatches_image(page_html, images)
+        cover_url = extract_page_image(page_html) or choose_prosperopatches_image(
+            page_html, images
+        )
 
         return title, cover_url, url
 
     except Exception as exc:
         activity(
-            "ProsperoPatches lookup failed for "
+            "ProsperoPatches browser lookup failed for "
             + ppsa
             + ": "
             + str(exc)
         )
         return None, None, url
-
 
 
 def image_candidates_from_bing(title: str, ppsa: str) -> list[dict[str, str]]:
@@ -1132,8 +1221,17 @@ def api_library_summary():
     return jsonify(summary)
 
 
+def open_browser() -> None:
+    time.sleep(1.0)
+    try:
+        webbrowser.open("http://127.0.0.1:8765")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     ensure_layout()
     WATCHER.start()
+    threading.Thread(target=open_browser, name="HermesBrowser", daemon=True).start()
     print("Hermes DL running at http://127.0.0.1:8765")
     app.run(host="127.0.0.1", port=8765, debug=False)

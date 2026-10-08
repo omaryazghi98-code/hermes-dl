@@ -36,7 +36,11 @@ Hermes groups the parts together using the archive base name, waits for the file
 
 Only a successful WinRAR test is allowed to proceed to extraction.
 
-For a detected PPSA, Hermes uses Crawl4AI to crawl the corresponding SerialStation title page, extracts the game title, searches for a cover through a Crawl4AI browser crawl of Bing Images, and caches the result under:
+For a detected PPSA, Hermes opens the canonical ProsperoPatches page:
+
+https://prosperopatches.com/PPSAxxxxx
+
+It uses the page's own title/heading and image metadata first, then falls back to a Crawl4AI browser crawl when the normal HTTP response does not expose the metadata. Covers are cached under:
 
 ```
 D:\_Automation\IDM-AutoExtract\covers\

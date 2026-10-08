@@ -154,8 +154,12 @@ def ppsa_number(ppsa: str) -> str:
     return re.sub(r"(?i)^PPSA", "", ppsa)
 
 
+def prosperopatches_url(ppsa: str) -> str:
+    return "https://prosperopatches.com/" + ppsa
+
+
 def ppsa_url(ppsa: str) -> str:
-    return "https://www.serialstation.com/titles/PPSA/" + ppsa_number(ppsa)
+    return prosperopatches_url(ppsa)
 
 
 def archive_info(path: Path) -> tuple[str, str, int] | None:
@@ -408,60 +412,123 @@ def html_h1(html_text: str) -> str | None:
     return value or None
 
 
+def extract_meta_content(page_html: str, property_name: str) -> str | None:
+    pattern = rf'<meta[^>]+(?:property|name)=["\\']{re.escape(property_name)}["\\'][^>]+content=["\\'](.*?)["\\']'
+    match = re.search(pattern, page_html or "", flags=re.I | re.S)
+    if match:
+        return html.unescape(match.group(1)).strip() or None
+
+    reverse_pattern = rf'<meta[^>]+content=["\\'](.*?)["\\'][^>]+(?:property|name)=["\\']{re.escape(property_name)}["\\']'
+    match = re.search(reverse_pattern, page_html or "", flags=re.I | re.S)
+    if match:
+        return html.unescape(match.group(1)).strip() or None
+
+    return None
+
+
+def choose_prosperopatches_image(page_html: str, media_images: list[Any]) -> str | None:
+    # First choice: explicit image metadata from the ProsperoPatches page.
+    for key in ("og:image", "twitter:image", "twitter:image:src"):
+        candidate = extract_meta_content(page_html, key)
+        if candidate and candidate.startswith(("http://", "https://")):
+            if not re.search(
+                r"logo|favicon|icon|avatar|sprite|banner|tracking",
+                candidate,
+                re.I,
+            ):
+                return candidate
+
+    # Second choice: images Crawl4AI found on the same page.
+    candidates: list[tuple[int, str]] = []
+
+    for image in media_images:
+        if not isinstance(image, dict):
+            continue
+
+        src = str(image.get("src") or "").strip()
+        if not src.startswith(("http://", "https://")):
+            continue
+
+        alt = str(
+            image.get("alt")
+            or image.get("desc")
+            or image.get("title")
+            or ""
+        )
+        text = (src + " " + alt).lower()
+
+        score = 0
+        if "cover" in text or "box" in text or "art" in text:
+            score += 12
+        if "ps5" in text:
+            score += 8
+        if re.search(r"\.(jpg|jpeg|png|webp)(?:\?|$)", text):
+            score += 2
+        if re.search(
+            r"logo|favicon|icon|avatar|sprite|banner|tracking|discord|telegram",
+            text,
+            re.I,
+        ):
+            score -= 50
+
+        candidates.append((score, src))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1] if candidates[0][0] > -20 else None
+
+
 def resolve_title_with_crawl4ai(ppsa: str) -> tuple[str | None, str | None, str | None]:
-    url = ppsa_url(ppsa)
+    # ProsperoPatches is the authoritative source for PPSA metadata.
+    url = prosperopatches_url(ppsa)
+
+    if not CRAWL4AI_AVAILABLE:
+        return None, None, url
 
     try:
         result = run_crawl(url)
         page_html = getattr(result, "html", "") or ""
         markdown = getattr(result, "markdown", "") or ""
 
-        title = html_h1(page_html)
+        title = (
+            extract_meta_content(page_html, "og:title")
+            or extract_meta_content(page_html, "twitter:title")
+            or html_h1(page_html)
+        )
+
+        if title:
+            title = re.sub(
+                r"\s*[\|\-–—]\s*ProsperoPatches.*$",
+                "",
+                html.unescape(title),
+                flags=re.I,
+            ).strip()
+
         if not title:
-            lines = [line.strip() for line in markdown.splitlines()]
-            for line in lines:
+            for line in [line.strip() for line in markdown.splitlines()]:
                 if line.startswith("# ") and not PPSA_RE.search(line):
                     title = line[2:].strip()
                     break
 
         title = safe_name(title) if title else None
-        if title:
-            images = []
-            media = getattr(result, "media", None) or {}
-            images.extend(media.get("images", []) if isinstance(media, dict) else [])
 
-            cover_url = None
-            for image in images:
-                source = image.get("src") if isinstance(image, dict) else None
-                if source and not re.search(r"icon|logo|avatar|favicon", source, re.I):
-                    cover_url = source
-                    break
+        media = getattr(result, "media", None) or {}
+        images = media.get("images", []) if isinstance(media, dict) else []
+        cover_url = choose_prosperopatches_image(page_html, images)
 
-            return title, cover_url, url
+        return title, cover_url, url
 
     except Exception as exc:
-        activity("Crawl4AI title lookup failed for " + ppsa + ": " + str(exc))
-
-    try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=25,
+        activity(
+            "ProsperoPatches lookup failed for "
+            + ppsa
+            + ": "
+            + str(exc)
         )
-        response.raise_for_status()
-        page = response.text
-        title = html_h1(page)
-        if not title:
-            match = re.search(r"<title[^>]*>(.*?)</title>", page, flags=re.I | re.S)
-            if match:
-                title = re.sub(r"<[^>]+>", " ", match.group(1))
-                title = re.sub(r"\s+", " ", html.unescape(title)).strip()
-        if title:
-            return safe_name(title), None, url
-    except Exception as exc:
-        activity("HTTP title fallback failed for " + ppsa + ": " + str(exc))
+        return None, None, url
 
-    return None, None, None
 
 
 def image_candidates_from_bing(title: str, ppsa: str) -> list[dict[str, str]]:
@@ -537,67 +604,89 @@ def download_cover(title: str, ppsa: str, preferred: str | None = None) -> tuple
     cover_dir = Path(CONFIG["automation_root"]) / "covers"
     cover_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = list(cover_dir.glob(ppsa + ".*"))
-    for path in existing:
+    for path in cover_dir.glob(ppsa + ".*"):
         if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
             return str(path), path.name
 
-    candidates: list[dict[str, str]] = []
-    if preferred:
-        candidates.append({"src": preferred, "alt": "metadata cover"})
-    candidates.extend(image_candidates_from_bing(title, ppsa))
+    if not preferred:
+        activity("No cover exposed by ProsperoPatches for " + ppsa)
+        return None, None
 
-    for candidate in candidates:
-        source = candidate.get("src", "")
-        try:
-            response = requests.get(
-                source,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=25,
-                stream=True,
+    target: Path | None = None
+
+    try:
+        response = requests.get(
+            preferred,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/154 Safari/537.36"
+                )
+            },
+            timeout=30,
+            stream=True,
+        )
+        response.raise_for_status()
+
+        content_type = (
+            response.headers.get("Content-Type") or ""
+        ).split(";")[0].lower()
+
+        suffix_map = {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+
+        suffix = suffix_map.get(content_type)
+
+        if not suffix:
+            guessed = Path(
+                urllib.parse.urlparse(preferred).path
+            ).suffix.lower()
+            if guessed in {".jpg", ".jpeg", ".png", ".webp"}:
+                suffix = ".jpg" if guessed == ".jpeg" else guessed
+
+        if not suffix:
+            activity(
+                "ProsperoPatches cover rejected for "
+                + ppsa
+                + " (not a recognized image)."
             )
-            if response.status_code != 200:
-                continue
+            return None, None
 
-            content_type = (response.headers.get("Content-Type") or "").split(";")[0].lower()
-            if not content_type.startswith("image/"):
-                continue
+        target = cover_dir / (ppsa + suffix)
+        total = 0
 
-            suffix_map = {
-                "image/jpeg": ".jpg",
-                "image/jpg": ".jpg",
-                "image/png": ".png",
-                "image/webp": ".webp",
-            }
-            suffix = suffix_map.get(content_type)
-            if not suffix:
-                continue
+        with target.open("wb") as handle:
+            for chunk in response.iter_content(128 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > 15 * 1024 * 1024:
+                    raise ValueError("Cover exceeds 15 MB")
+                handle.write(chunk)
 
-            target = cover_dir / (ppsa + suffix)
-            total = 0
-            with target.open("wb") as handle:
-                for chunk in response.iter_content(1024 * 128):
-                    if not chunk:
-                        continue
-                    total += len(chunk)
-                    if total > 15 * 1024 * 1024:
-                        raise ValueError("Image is larger than 15 MB")
-                    handle.write(chunk)
+        if total < 10 * 1024:
+            target.unlink(missing_ok=True)
+            activity("ProsperoPatches cover was unexpectedly small for " + ppsa)
+            return None, None
 
-            if total < 10 * 1024:
-                target.unlink(missing_ok=True)
-                continue
+        return str(target), target.name
 
-            return str(target), target.name
+    except Exception as exc:
+        if target:
+            target.unlink(missing_ok=True)
 
-        except Exception:
-            try:
-                target.unlink(missing_ok=True)
-            except Exception:
-                pass
-            continue
+        activity(
+            "ProsperoPatches cover download failed for "
+            + ppsa
+            + ": "
+            + str(exc)
+        )
+        return None, None
 
-    return None, None
 
 
 def resolve_metadata(ppsa: str, archive_name: str) -> dict[str, Any]:
@@ -617,7 +706,7 @@ def resolve_metadata(ppsa: str, archive_name: str) -> dict[str, Any]:
         "cover": cover_name,
         "cover_path": cover_path,
         "resolved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "resolver": "Crawl4AI + SerialStation + Bing Images",
+        "resolver": "Crawl4AI + ProsperoPatches",
     }
 
 

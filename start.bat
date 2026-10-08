@@ -11,9 +11,7 @@ if not exist ".venv\Scripts\python.exe" (
     .venv\Scripts\python.exe -m pip install -r requirements.txt || goto fail
 
     echo [Hermes] Installing Crawl4AI browser dependencies...
-    .venv\Scripts\python.exe -m crawl4ai_install || (
-        .venv\Scripts\crawl4ai-setup.exe
-    )
+    .venv\Scripts\crawl4ai-setup.exe || .venv\Scripts\python.exe -m playwright install chromium
 )
 
 echo [Hermes] Starting Hermes DL...

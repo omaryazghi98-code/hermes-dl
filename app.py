@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 try:
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
@@ -713,6 +713,17 @@ def process_group(state: dict[str, Any], group: ArchiveGroup) -> None:
         activity("Extraction failed: " + group.base_name + " | " + message[:300])
         return
 
+    cached_cover = metadata.get("cover_path")
+    if cached_cover:
+        try:
+            source_cover = Path(cached_cover)
+            if source_cover.exists():
+                local_cover = destination / ("cover" + source_cover.suffix.lower())
+                shutil.copy2(source_cover, local_cover)
+                metadata["local_cover"] = local_cover.name
+        except OSError as exc:
+            activity("Could not copy cover into game folder: " + str(exc))
+
     metadata_file = destination / "metadata.json"
     metadata_file.write_text(
         json.dumps(
@@ -855,6 +866,16 @@ def update_config(new_config: dict[str, Any]) -> dict[str, Any]:
 @app.get("/")
 def index():
     return render_template("index.html")
+
+
+@app.get("/covers/<path:name>")
+def cover_file(name: str):
+    filename = Path(name).name
+    cover_dir = Path(CONFIG["automation_root"]) / "covers"
+    path = cover_dir / filename
+    if not path.exists() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+        return jsonify({"error": "Cover not found."}), 404
+    return send_file(path)
 
 
 @app.get("/api/status")

@@ -187,11 +187,13 @@ class HermesIntegrationTests(unittest.TestCase):
             download_response = MagicMock()
             download_response.__enter__.return_value = download_response
             download_response.iter_content.return_value = [b"abc", b"def"]
-            with patch.object(hermes, "fetch_latest_payload_release", return_value=release), \\
-                 patch.object(hermes, "PAYLOAD_DOWNLOAD_DIR", root / "payloads"), \\
-                 patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", root / "playlist.json"), \\
-                 patch.object(hermes.requests, "get", side_effect=[api_response, download_response]), \\
-                 patch.object(hermes, "activity"):
+            with (
+                patch.object(hermes, "fetch_latest_payload_release", return_value=release),
+                patch.object(hermes, "PAYLOAD_DOWNLOAD_DIR", root / "payloads"),
+                patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", root / "playlist.json"),
+                patch.object(hermes.requests, "get", side_effect=[api_response, download_response]),
+                patch.object(hermes, "activity"),
+            ):
                 response = self.client.post("/api/payloads/releases/download", json={
                     "repository": "etaHEN/etaHEN",
                     "asset_name": "payload.elf",

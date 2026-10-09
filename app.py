@@ -110,22 +110,12 @@ CONFIG = load_config()
 
 
 def ensure_layout() -> None:
-    paths = [
-        CONFIG["download_root"],
-        CONFIG["rar_temp"],
-        CONFIG["automation_root"],
-        CONFIG["game_root"],
-        CONFIG["inbox_root"],
-        CONFIG.get("ftp_local_root", CONFIG["inbox_root"]),
-        str(Path(CONFIG["automation_root"]) / "covers"),
-        str(Path(CONFIG["automation_root"]) / "logs"),
-        str(DATA_DIR / "payloads"),
-    ]
-    for value in paths:
-        try:
-            Path(value).expanduser().mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
+    # Only create Hermes-owned application data automatically. User-configured
+    # drive folders are audited and created through the explicit Storage action.
+    try:
+        (DATA_DIR / "payloads").mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
 
 def activity(message: str) -> None:
@@ -2159,6 +2149,353 @@ def manager():
     return render_template("manager.html")
 
 
+
+# ---------------- D: Drive Manager / Path Auditor ----------------
+STORAGE_DIRECTORY_CONFIG = {
+    "download_root": "IDM staging / watched downloads",
+    "rar_temp": "WinRAR temporary workspace",
+    "automation_root": "Hermes automation and metadata",
+    "game_root": "Extracted PS5 games",
+    "inbox_root": "Unsorted / unresolved downloads",
+    "ftp_local_root": "FTP / PS5 package staging",
+}
+ORGANIZE_RULES = {
+    ".pdf": ("Documents", "Documents"),
+    ".doc": ("Documents", "Documents"),
+    ".docx": ("Documents", "Documents"),
+    ".xls": ("Documents", "Documents"),
+    ".xlsx": ("Documents", "Documents"),
+    ".ppt": ("Documents", "Documents"),
+    ".pptx": ("Documents", "Documents"),
+    ".txt": ("Documents", "Documents"),
+    ".md": ("Documents", "Documents"),
+    ".rtf": ("Documents", "Documents"),
+    ".csv": ("Documents", "Documents"),
+    ".json": ("Documents", "Documents"),
+    ".xml": ("Documents", "Documents"),
+    ".jpg": ("Images", "Pictures"),
+    ".jpeg": ("Images", "Pictures"),
+    ".png": ("Images", "Pictures"),
+    ".gif": ("Images", "Pictures"),
+    ".webp": ("Images", "Pictures"),
+    ".bmp": ("Images", "Pictures"),
+    ".tif": ("Images", "Pictures"),
+    ".tiff": ("Images", "Pictures"),
+    ".heic": ("Images", "Pictures"),
+    ".mp4": ("Videos", "Videos"),
+    ".mkv": ("Videos", "Videos"),
+    ".avi": ("Videos", "Videos"),
+    ".mov": ("Videos", "Videos"),
+    ".webm": ("Videos", "Videos"),
+    ".m4v": ("Videos", "Videos"),
+    ".mp3": ("Audio", "Audio"),
+    ".wav": ("Audio", "Audio"),
+    ".flac": ("Audio", "Audio"),
+    ".aac": ("Audio", "Audio"),
+    ".m4a": ("Audio", "Audio"),
+    ".ogg": ("Audio", "Audio"),
+    ".exe": ("Installers", "Applications"),
+    ".msi": ("Installers", "Applications"),
+    ".msix": ("Installers", "Applications"),
+    ".msp": ("Installers", "Applications"),
+    ".pkg": ("PS5 Packages", "PS5 packages"),
+    ".elf": ("Payloads", "Payloads"),
+    ".payload": ("Payloads", "Payloads"),
+    ".iso": ("Disc Images", "Disc images"),
+    ".img": ("Disc Images", "Disc images"),
+    ".chd": ("Disc Images", "Disc images"),
+    ".cue": ("Disc Images", "Disc images"),
+    ".pbp": ("Disc Images", "Disc images"),
+    ".zip": ("Archives", "Compressed files"),
+    ".7z": ("Archives", "Compressed files"),
+}
+
+
+def storage_path_within(path: Path, root: Path) -> bool:
+    try:
+        path_text = os.path.normcase(os.path.abspath(str(path)))
+        root_text = os.path.normcase(os.path.abspath(str(root)))
+        return os.path.commonpath([path_text, root_text]) == root_text
+    except (OSError, ValueError):
+        return False
+
+
+def storage_same_path(left: str, right: str) -> bool:
+    try:
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+    except (OSError, ValueError):
+        return False
+
+
+def storage_root_from_request(data: dict[str, Any]) -> Path:
+    root_text = str(data.get("root") or "D:\\").strip()
+    root = Path(root_text).expanduser()
+    if not root_text or not root.exists() or not root.is_dir():
+        raise ValueError("Choose an existing drive or folder first. No files were changed.")
+    return root.resolve()
+
+
+def storage_is_managed_root(path: Path) -> bool:
+    managed = [
+        Path(str(CONFIG.get(key) or "")).expanduser()
+        for key in STORAGE_DIRECTORY_CONFIG
+        if CONFIG.get(key)
+    ]
+    for candidate in managed:
+        if storage_same_path(str(path), str(candidate)) or storage_path_within(path, candidate):
+            return True
+    return False
+
+
+def storage_tools_audit() -> list[dict[str, Any]]:
+    idm = find_idm()
+    winrar = find_winrar()
+    result = [
+        {"label": "Internet Download Manager", "path": idm or str(CONFIG.get("idm_exe_path") or ""), "status": "ready" if idm else "not-found", "optional": True},
+        {"label": "WinRAR", "path": winrar or "", "status": "ready" if winrar else "not-found", "optional": False},
+    ]
+    for component, label in (("orbit_zero", "Orbit Zero"), ("ps5upload", "PS5Upload"), ("filezilla", "FileZilla")):
+        configured = str(CONFIG.get({
+            "orbit_zero": "orbit_zero_exe_path",
+            "ps5upload": "ps5upload_exe_path",
+            "filezilla": "filezilla_exe_path",
+        }[component]) or "").strip()
+        path = find_companion_path(component)
+        result.append({
+            "label": label,
+            "path": str(path) if path else configured,
+            "status": "ready" if path else ("not-configured" if not configured else "missing"),
+            "optional": True,
+        })
+    return result
+
+
+def storage_audit_result(root: Path) -> dict[str, Any]:
+    rows = []
+    root_resolved = root.resolve()
+    for key, label in STORAGE_DIRECTORY_CONFIG.items():
+        raw = str(CONFIG.get(key) or "").strip()
+        if not raw:
+            rows.append({"key": key, "label": label, "path": "", "status": "not-configured", "exists": False, "writable": False, "inside_root": False})
+            continue
+        path = Path(raw).expanduser()
+        inside_root = storage_path_within(path, root_resolved)
+        exists = path.exists()
+        is_directory = path.is_dir() if exists else False
+        writable = bool(os.access(path, os.W_OK)) if is_directory else False
+        unsafe_repo_overlap = storage_path_within(APP_DIR.resolve(), path) or storage_path_within(path, APP_DIR.resolve())
+        if unsafe_repo_overlap:
+            status = "protected-path"
+        elif not inside_root:
+            status = "outside-selected-root"
+        elif not exists:
+            status = "missing"
+        elif not is_directory:
+            status = "not-a-directory"
+        elif not writable:
+            status = "not-writable"
+        else:
+            status = "ready"
+        rows.append({
+            "key": key,
+            "label": label,
+            "path": str(path),
+            "status": status,
+            "exists": exists,
+            "writable": writable,
+            "inside_root": inside_root,
+        })
+
+    # Exact duplicate paths usually mean two tasks would write into the same folder.
+    seen: dict[str, str] = {}
+    duplicate_paths = []
+    for row in rows:
+        if row["path"]:
+            normalized = os.path.normcase(os.path.abspath(row["path"]))
+            if normalized in seen:
+                duplicate_paths.append({"path": row["path"], "first": seen[normalized], "second": row["label"]})
+            else:
+                seen[normalized] = row["label"]
+
+    try:
+        usage = shutil.disk_usage(root_resolved)
+        drive = {"path": str(root_resolved), "total": usage.total, "used": usage.used, "free": usage.free}
+    except OSError as exc:
+        drive = {"path": str(root_resolved), "error": str(exc)}
+    return {"root": str(root_resolved), "drive": drive, "paths": rows, "tools": storage_tools_audit(), "duplicate_paths": duplicate_paths}
+
+
+def storage_organization_destination(root: Path, source: Path) -> tuple[str, str] | None:
+    extension = source.suffix.lower()
+    if extension in {".rar", ".r00", ".r01", ".r02", ".z01", ".z02"}:
+        return None
+    # Keep split RAR and 7-Zip volume sets together; these must never be sorted one file at a time.
+    if re.search(r"(?i)(?:\.part\d+\.rar|\.r\d{2,}|\.7z\.\d{3,}|\.zip\.\d{3,})$", source.name):
+        return None
+    rule = ORGANIZE_RULES.get(extension)
+    if not rule:
+        return None
+    category, _description = rule
+    if extension == ".zip":
+        stem = source.stem.lower()
+        try:
+            siblings = list(source.parent.iterdir())
+        except OSError:
+            siblings = []
+        if any(re.match(re.escape(stem) + r"\.z\d{2,}$", sibling.name.lower()) for sibling in siblings if sibling.is_file()):
+            return None
+    target_dir = root / "_Organized" / category
+    return category, str(target_dir / source.name)
+
+
+@app.get("/api/storage/audit")
+def api_storage_audit():
+    try:
+        root = storage_root_from_request(request.args.to_dict())
+        return jsonify(storage_audit_result(root))
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/storage/paths/create-missing")
+def api_storage_create_missing_paths():
+    data = request.get_json(force=True) or {}
+    try:
+        root = storage_root_from_request(data)
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    created = []
+    skipped = []
+    for key, label in STORAGE_DIRECTORY_CONFIG.items():
+        raw = str(CONFIG.get(key) or "").strip()
+        if not raw:
+            skipped.append({"label": label, "path": "", "reason": "Not configured"})
+            continue
+        path = Path(raw).expanduser()
+        if not storage_path_within(path, root):
+            skipped.append({"label": label, "path": raw, "reason": "Outside the selected drive/folder"})
+            continue
+        if storage_same_path(str(path), str(root)):
+            skipped.append({"label": label, "path": raw, "reason": "A managed folder cannot be the entire selected drive"})
+            continue
+        if storage_path_within(APP_DIR.resolve(), path):
+            skipped.append({"label": label, "path": raw, "reason": "Protected because it is inside or contains the Hermes installation"})
+            continue
+        try:
+            if path.exists():
+                if path.is_dir():
+                    skipped.append({"label": label, "path": str(path), "reason": "Already exists"})
+                else:
+                    skipped.append({"label": label, "path": str(path), "reason": "A file occupies this path"})
+                continue
+            path.mkdir(parents=True, exist_ok=False)
+            created.append({"label": label, "path": str(path)})
+            activity("STORAGE: created configured directory " + str(path))
+        except OSError as exc:
+            skipped.append({"label": label, "path": raw, "reason": str(exc)})
+    ensure_layout()
+    return jsonify({"ok": True, "created": created, "skipped": skipped, "audit": storage_audit_result(root)})
+
+
+@app.post("/api/storage/organize/preview")
+def api_storage_organize_preview():
+    data = request.get_json(force=True) or {}
+    try:
+        root = storage_root_from_request(data)
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if storage_is_managed_root(root) or storage_path_within(root, APP_DIR.resolve()):
+        return jsonify({"error": "For safety, choose a general drive/folder such as D:\\\\, not an active Hermes staging folder or the Hermes installation itself."}), 400
+    try:
+        children = list(root.iterdir())
+    except OSError as exc:
+        return jsonify({"error": "Could not list the selected folder: " + str(exc)}), 500
+    suggestions = []
+    skipped = 0
+    for source in sorted(children, key=lambda item: item.name.lower()):
+        try:
+            if source.is_symlink() or not source.is_file():
+                continue
+            target = storage_organization_destination(root, source)
+            if target is None:
+                if source.suffix.lower() in ORGANIZE_RULES or source.suffix.lower() in {".rar", ".r00", ".z01"}:
+                    skipped += 1
+                continue
+            category, target_text = target
+            destination = Path(target_text)
+            if storage_path_within(destination, APP_DIR.resolve()) or storage_path_within(APP_DIR.resolve(), destination):
+                skipped += 1
+                continue
+            suggestions.append({
+                "filename": source.name,
+                "source": str(source),
+                "destination": str(destination),
+                "category": category,
+                "bytes": source.stat().st_size,
+                "collision": destination.exists(),
+                "selected_by_default": False,
+            })
+        except OSError:
+            skipped += 1
+    return jsonify({
+        "root": str(root),
+        "items": suggestions,
+        "skipped_protected_or_ambiguous": skipped,
+        "note": "Preview only. Only direct child files with recognized extensions are listed; folders and all descendants are left untouched. No files were moved.",
+    })
+
+
+@app.post("/api/storage/organize/move-selected")
+def api_storage_organize_move_selected():
+    data = request.get_json(force=True) or {}
+    filenames = data.get("filenames")
+    try:
+        root = storage_root_from_request(data)
+    except (OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    if storage_is_managed_root(root) or storage_path_within(root, APP_DIR.resolve()):
+        return jsonify({"error": "Choose a general drive/folder, not an active Hermes staging folder or the Hermes installation."}), 400
+    if not isinstance(filenames, list) or not filenames or any(not isinstance(name, str) for name in filenames):
+        return jsonify({"error": "Select one or more files from the organization preview."}), 400
+    if len(filenames) > 500:
+        return jsonify({"error": "Move at most 500 files per reviewed batch."}), 400
+    moved = []
+    skipped = []
+    for filename in dict.fromkeys(filenames):
+        if not filename or Path(filename).name != filename or filename in {".", ".."}:
+            skipped.append({"filename": str(filename), "reason": "Invalid file name"})
+            continue
+        source = root / filename
+        try:
+            if source.is_symlink() or not source.is_file() or source.parent.resolve() != root.resolve():
+                skipped.append({"filename": filename, "reason": "Not a direct child file of the selected folder"})
+                continue
+            target = storage_organization_destination(root, source)
+            if target is None:
+                skipped.append({"filename": filename, "reason": "No safe organization rule (unknown or multi-part archive)"})
+                continue
+            category, destination_text = target
+            destination = Path(destination_text)
+            if not storage_path_within(destination, root) or storage_path_within(destination, APP_DIR.resolve()) or storage_path_within(APP_DIR.resolve(), destination):
+                skipped.append({"filename": filename, "reason": "Destination failed the protected-path check"})
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                skipped.append({"filename": filename, "reason": "Destination already exists; it was not overwritten"})
+                continue
+            # The production app runs on Windows; os.rename fails rather than replacing an
+            # existing destination on Windows. We also check first and report collisions.
+            source.rename(destination)
+            moved.append({"filename": filename, "category": category, "from": str(source), "to": str(destination), "bytes": destination.stat().st_size})
+            activity("STORAGE: organized " + str(source) + " -> " + str(destination))
+        except FileExistsError:
+            skipped.append({"filename": filename, "reason": "Destination already exists; it was not overwritten"})
+        except OSError as exc:
+            skipped.append({"filename": filename, "reason": str(exc)})
+    return jsonify({"ok": True, "moved": moved, "skipped": skipped, "note": "Files were moved only after explicit selection. No folders were moved and no existing file was intentionally overwritten."})
+
+
 @app.get("/api/storage/drive")
 def api_storage_drive():
     try:
@@ -2419,7 +2756,8 @@ def api_open_folder():
         return jsonify({"error": "Unknown folder."}), 400
 
     path = Path(folder)
-    path.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or not path.is_dir():
+        return jsonify({"error": "This configured folder is missing. Open Storage Scanner and run Audit paths first; create it only after reviewing the path."}), 400
 
     try:
         if os.name == "nt":

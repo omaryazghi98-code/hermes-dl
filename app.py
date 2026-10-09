@@ -499,12 +499,12 @@ def html_h1(html_text: str) -> str | None:
 
 
 def extract_meta_content(page_html: str, property_name: str) -> str | None:
-    pattern = rf"<meta[^>]+(?:property|name)=['\\"]{re.escape(property_name)}['\\"][^>]+content=['\\"](.*?)['\\"]"
+    pattern = r"<meta[^>]+(?:property|name)=[\"']" + re.escape(property_name) + r"[\"'][^>]+content=[\"'](.*?)[\"']"
     match = re.search(pattern, page_html or "", flags=re.I | re.S)
     if match:
         return html.unescape(match.group(1)).strip() or None
 
-    reverse_pattern = rf"<meta[^>]+content=['\\"](.*?)['\\"][^>]+(?:property|name)=['\\"]{re.escape(property_name)}['\\"]"
+    reverse_pattern = r"<meta[^>]+content=[\"'](.*?)[\"'][^>]+(?:property|name)=[\"']" + re.escape(property_name) + r"[\"']"
     match = re.search(reverse_pattern, page_html or "", flags=re.I | re.S)
     if match:
         return html.unescape(match.group(1)).strip() or None

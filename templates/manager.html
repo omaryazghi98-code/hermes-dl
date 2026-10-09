@@ -149,7 +149,7 @@
   <div class="sectionhead"><h2>Latest official payload releases</h2><button class="primary" onclick="refreshPayloadReleases()">Check GitHub for updates</button></div>
   <div id="payloadReleaseStatus" class="banner">Release information hasn't been checked yet.</div>
   <div id="payloadReleaseList" class="grid2"><div class="empty">Open this page or check GitHub for the latest official releases.</div></div>
-  <div class="banner error" style="margin-top:12px">Firmware caution: the official kstuff v1.6.7 release notes describe support for PS5 firmware 3.00–10.01. Your previously reported 13.60 firmware is outside that documented range. Do not send that build to 13.60 unless an official source explicitly confirms compatibility. Hermes cannot verify your console firmware or guarantee a payload is safe.</div>
+  <div class="banner error" style="margin-top:12px">Firmware caution: newest does not mean compatible. Read the per-release firmware notes before sending. Your previously reported PS5 firmware was 13.60; the official kstuff v1.6.7 notes only document 3.00–10.01. Hermes cannot inspect your live firmware or guarantee a payload is safe.</div>
  </div>
  <div class="card" style="margin-top:14px">
   <div class="sectionhead"><h2>Add your own payload</h2><span class="badge">Local file</span></div>
@@ -277,6 +277,17 @@ async function addLocalPayload(){
     await loadPayloadPlaylist();
   }catch(e){status.className='banner error';status.textContent=e.message}
 }
+async function movePayloadItem(id,direction){
+  const items=payloadPlaylistCache.slice();
+  const index=items.findIndex(item=>item.id===id);
+  const next=index+direction;
+  if(index<0||next<0||next>=items.length)return;
+  [items[index],items[next]]=[items[next],items[index]];
+  try{
+    await api('/api/payloads/reorder',{method:'POST',body:JSON.stringify({ids:items.map(item=>item.id)})});
+    await loadPayloadPlaylist();
+  }catch(e){alert(e.message)}
+}
 async function removePayloadFromPlaylist(id){
   const item=payloadPlaylistCache.find(x=>x.id===id);
   if(!item)return;
@@ -291,7 +302,7 @@ async function sendPayloadFromPlaylist(id,button){
   const port=Number($('payloadTargetPort').value||9021);
   if(!ip){alert('Enter the PS5 LAN IP address first.');return}
   if(!Number.isInteger(port)||port<1||port>65535){alert('Enter a valid TCP port.');return}
-  const confirmed=confirm('Send '+item.filename+' ('+payloadHumanBytes(item.size)+') to '+ip+':'+port+'?\\n\\nThe PS5 payload loader must already be listening on this port. Hermes can confirm bytes were sent, but cannot confirm payload execution or firmware compatibility.');
+  const confirmed=confirm('Send '+item.filename+' ('+payloadHumanBytes(item.size)+') to '+ip+':'+port+'?\n\nThe PS5 payload loader must already be listening on this port. Hermes can confirm bytes were sent, but cannot confirm payload execution or firmware compatibility.');
   if(!confirmed)return;
   if(button){button.disabled=true;button.textContent='Queueing…'}
   try{
@@ -323,10 +334,12 @@ async function loadPayloadPlaylist(){
       playlist.innerHTML='<div class="tablewrap"><table><thead><tr><th>Payload</th><th>Source / version</th><th>Size</th><th>Actions</th></tr></thead><tbody>'+payloadPlaylistCache.map(item=>{
         const missing=!item.exists;
         const source=item.source==='official'?'Official · '+(item.version||'release'):'Local file';
-        return '<tr><td><strong>'+esc(item.name)+'</strong><div class="muted path">'+esc(item.filename||item.path)+'</div>'+(missing?'<div class="muted" style="color:var(--red)">File missing — browse/add it again</div>':'')+'</td><td>'+esc(source)+(item.repository?'<div class="muted"><a href="'+esc(item.release_url||'#')+'" target="_blank" rel="noopener noreferrer">Release page ↗</a></div>':'')+'</td><td>'+esc(payloadHumanBytes(item.size))+'</td><td><div class="actions"><button class="primary payload-send" data-id="'+esc(item.id)+'" '+(missing?'disabled':'')+'>Send</button><button class="payload-remove" data-id="'+esc(item.id)+'">Remove</button></div></td></tr>';
+        return '<tr><td><strong>'+esc(item.name)+'</strong><div class="muted path">'+esc(item.filename||item.path)+'</div>'+(missing?'<div class="muted" style="color:var(--red)">File missing — browse/add it again</div>':'')+'</td><td>'+esc(source)+(item.repository?'<div class="muted"><a href="'+esc(item.release_url||'#')+'" target="_blank" rel="noopener noreferrer">Release page ↗</a></div>':'')+'</td><td>'+esc(payloadHumanBytes(item.size))+'</td><td><div class="actions"><button class="payload-up" data-id="'+esc(item.id)+'" '+(payloadPlaylistCache.indexOf(item)===0?'disabled':'')+'>↑</button><button class="payload-down" data-id="'+esc(item.id)+'" '+(payloadPlaylistCache.indexOf(item)===payloadPlaylistCache.length-1?'disabled':'')+'>↓</button><button class="primary payload-send" data-id="'+esc(item.id)+'" '+(missing?'disabled':'')+'>Send</button><button class="payload-remove" data-id="'+esc(item.id)+'">Remove</button></div></td></tr>';
       }).join('')+'</tbody></table></div>';
       playlist.querySelectorAll('.payload-send').forEach(btn=>btn.addEventListener('click',()=>sendPayloadFromPlaylist(btn.dataset.id,btn)));
       playlist.querySelectorAll('.payload-remove').forEach(btn=>btn.addEventListener('click',()=>removePayloadFromPlaylist(btn.dataset.id)));
+      playlist.querySelectorAll('.payload-up').forEach(btn=>btn.addEventListener('click',()=>movePayloadItem(btn.dataset.id,-1)));
+      playlist.querySelectorAll('.payload-down').forEach(btn=>btn.addEventListener('click',()=>movePayloadItem(btn.dataset.id,1)));
     }
     const jobs=$('payloadJobs');
     const jobItems=data.jobs||[];

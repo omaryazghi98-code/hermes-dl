@@ -21,6 +21,7 @@
   <button data-page="storage"><span class="ico">▤</span>Storage scanner</button>
   <button data-page="downloads"><span class="ico">⇩</span>Download center</button>
   <button data-page="console"><span class="ico">⌁</span>Console & transfers</button>
+  <button data-page="payloads"><span class="ico">↗</span>Payload sender</button>
   <button data-page="settings"><span class="ico">⚙</span>Settings</button>
  </nav>
  <div class="side-note">Safety mode<br><br>Scan and review first. Hermes never deletes files automatically.</div>
@@ -134,6 +135,39 @@
   <div id="ftpJobs" class="empty">No FTP transfer jobs yet.</div>
  </div>
 </section>
+<section class="page" id="page-payloads">
+ <div class="card">
+  <div class="sectionhead"><h2>Payload destination</h2><span class="badge">TCP sender</span></div>
+  <div class="muted">Sends the selected file's raw bytes to a payload loader that's already listening on the PS5. A successful transfer only confirms bytes were sent; it does not prove that the payload executed.</div>
+  <div class="grid2">
+   <div class="field"><label>PS5 LAN IPv4 address</label><input id="payloadTargetIp" placeholder="192.168.1.40"></div>
+   <div class="field"><label>Payload-loader TCP port</label><input id="payloadTargetPort" type="number" min="1" max="65535" value="9021"></div>
+  </div>
+  <div class="muted">Common ports documented by etaHEN: 9020 (exploit loader) and 9021 (console-side loader). Choose the port matching the loader currently running on your console.</div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>Latest official payload releases</h2><button class="primary" onclick="refreshPayloadReleases()">Check GitHub for updates</button></div>
+  <div id="payloadReleaseStatus" class="banner">Release information hasn't been checked yet.</div>
+  <div id="payloadReleaseList" class="grid2"><div class="empty">Open this page or check GitHub for the latest official releases.</div></div>
+  <div class="banner error" style="margin-top:12px">Firmware caution: the official kstuff v1.6.7 release notes describe support for PS5 firmware 3.00–10.01. Your previously reported 13.60 firmware is outside that documented range. Do not send that build to 13.60 unless an official source explicitly confirms compatibility. Hermes cannot verify your console firmware or guarantee a payload is safe.</div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>Add your own payload</h2><span class="badge">Local file</span></div>
+  <div class="field"><label>Payload file (.elf, .bin or .payload)</label><div style="display:flex;gap:8px"><input id="payloadLocalPath" placeholder="Choose a payload file from this PC"><button onclick="choosePayloadFile()">Browse</button></div></div>
+  <div class="field"><label>Playlist label (optional)</label><input id="payloadLocalName" placeholder="e.g. My custom payload"></div>
+  <div class="actions"><button class="primary" onclick="addLocalPayload()">Add to playlist</button></div>
+  <div id="payloadLocalStatus" class="banner">The file stays where it is. Hermes stores its path in the playlist; it does not modify your file.</div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>My payload playlist</h2><button onclick="loadPayloadPlaylist()">Refresh playlist</button></div>
+  <div class="muted">Official assets are downloaded into <code>data/payloads</code> and SHA-256 checked when GitHub provides a digest. Removing an entry only removes it from this playlist; files are kept on disk.</div>
+  <div id="payloadPlaylist" style="margin-top:12px"><div class="empty">Loading playlist…</div></div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>Payload send history</h2><button onclick="loadPayloadPlaylist()">Refresh status</button></div>
+  <div id="payloadJobs"><div class="empty">No payload sends yet.</div></div>
+ </div>
+</section>
 <section class="page" id="page-settings">
  <div class="card"><div class="sectionhead"><h2>Storage paths</h2><button class="primary" onclick="saveConfig()">Save settings</button></div><div class="grid2">
   <div class="field"><label>IDM staging / watched folder</label><input id="cfgDownload"></div><div class="field"><label>WinRAR temporary folder</label><input id="cfgRar"></div>
@@ -152,8 +186,8 @@
 </main></div>
 <script>
 const $=id=>document.getElementById(id);const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let cfg={},lastJobs=[];
-const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['Storage Scanner','Inventory your drive and review cleanup candidates safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],settings:['Settings','Configure folders and companion applications.']};
-function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage')$('scanRoot').value=$('scanRoot').value||'D:\\';}
+const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['Storage Scanner','Inventory your drive and review cleanup candidates safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],payloads:['Payload Sender','Manage a local payload playlist and send selected files to the PS5.'],settings:['Settings','Configure folders and companion applications.']};
+function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage')$('scanRoot').value=$('scanRoot').value||'D:\\';if(name==='payloads')loadPayloadWorkspace();}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
 async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opts});const d=await r.json();if(!r.ok)throw Error(d.error||('Request failed '+r.status));return d}
 function bytes(n){n=Number(n||0);let u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
@@ -181,6 +215,134 @@ try{const saved=JSON.parse(localStorage.getItem('hermes.ps5Jobs')||'[]');if(Arra
 function persistPs5Jobs(){try{localStorage.setItem('hermes.ps5Jobs',JSON.stringify(trackedPs5Jobs.slice(0,12)))}catch(e){}}
 function rememberPs5Job(job){trackedPs5Jobs=[job,...trackedPs5Jobs.filter(x=>x.job_id!==job.job_id)].slice(0,12);persistPs5Jobs()}
 async function chooseTransferFile(){if(!window.hermesDesktop?.chooseFile){alert('Use launch-desktop.bat to enable native file selection.');return}const chosen=await window.hermesDesktop.chooseFile('file');if(chosen)$('transferLocalPath').value=chosen}
+// ---- PS5 payload playlist and sender ----
+let payloadReleaseCache=[];
+let payloadPlaylistCache=[];
+let payloadLoadBusy=false;
+async function loadPayloadWorkspace(){
+  setIfIdle('payloadTargetIp',cfg.ps5_ip||'');
+  await Promise.all([loadPayloadPlaylist(),refreshPayloadReleases()]);
+}
+function payloadHumanBytes(n){return bytes(n||0)}
+async function refreshPayloadReleases(){
+  const status=$('payloadReleaseStatus'),host=$('payloadReleaseList');
+  status.className='banner';status.textContent='Checking the official GitHub release APIs…';
+  host.innerHTML='<div class="empty">Loading upstream releases…</div>';
+  try{
+    const data=await api('/api/payloads/releases');
+    payloadReleaseCache=data.releases||[];
+    const errors=data.errors||{};
+    if(!payloadReleaseCache.length){
+      status.className='banner error';
+      status.textContent='Could not load the official releases. '+Object.entries(errors).map(([k,v])=>k+': '+v).join(' · ');
+      host.innerHTML='<div class="empty">No official release metadata could be loaded. Your local payload playlist remains available.</div>';
+      return;
+    }
+    status.className='banner good';
+    status.textContent='Checked '+new Date((data.checked_at||Date.now()/1000)*1000).toLocaleTimeString()+'. Releases are resolved from the official repositories each time you refresh.';
+    host.innerHTML=payloadReleaseCache.map(r=>{
+      const notes=(r.release_notes||'').trim();
+      const noteHtml=r.compatibility_note?'<div class="banner warn">'+esc(r.compatibility_note)+'</div>':'';
+      const assets=(r.assets||[]).map(a=>'<div class="row"><div><strong>'+esc(a.name)+'</strong><div class="muted">'+esc(payloadHumanBytes(a.size))+' · '+esc(a.download_count)+' downloads</div></div><button class="primary payload-release-add" data-repo="'+esc(r.repository)+'" data-asset="'+esc(a.name)+'">Download & add</button></div>').join('');
+      return '<div class="card"><div class="sectionhead"><div><h3>'+esc(r.label)+' · '+esc(r.tag)+'</h3><div class="muted">'+esc(r.release_name)+' · '+esc(r.published_at||'date unavailable')+'</div></div><a href="'+esc(r.url)+'" target="_blank" rel="noopener noreferrer">Official release ↗</a></div>'+noteHtml+(notes?'<details><summary class="muted">Release notes</summary><pre style="white-space:pre-wrap;font:12px/1.5 inherit;color:var(--muted);max-height:150px;overflow:auto">'+esc(notes)+'</pre></details>':'')+'<div>'+assets+'</div></div>';
+    }).join('');
+    host.querySelectorAll('.payload-release-add').forEach(btn=>btn.addEventListener('click',()=>downloadOfficialPayload(btn.dataset.repo,btn.dataset.asset,btn)));
+    if(Object.keys(errors).length)status.textContent+=' Some sources failed: '+Object.entries(errors).map(([k,v])=>k+': '+v).join(' · ');
+  }catch(e){
+    status.className='banner error';status.textContent=e.message;host.innerHTML='<div class="empty">Could not load the official release list. Try again later.</div>';
+  }
+}
+async function downloadOfficialPayload(repository,assetName,button){
+  const status=$('payloadReleaseStatus');
+  if(button){button.disabled=true;button.textContent='Downloading…'}
+  status.className='banner';status.textContent='Rechecking latest release and downloading '+assetName+' from '+repository+'…';
+  try{
+    const d=await api('/api/payloads/releases/download',{method:'POST',body:JSON.stringify({repository,asset_name:assetName})});
+    status.className='banner good';status.textContent=(d.already_added?'Already in playlist: ':'Downloaded and SHA-256 checked: ')+d.item.name+'. It has not been sent to the console.';
+    await loadPayloadPlaylist();
+  }catch(e){status.className='banner error';status.textContent=e.message}
+  finally{if(button){button.disabled=false;button.textContent='Download & add'}}
+}
+async function choosePayloadFile(){
+  if(!window.hermesDesktop?.chooseFile){alert('Use launch-desktop.bat to enable the native file picker, or type a full local path.');return}
+  const chosen=await window.hermesDesktop.chooseFile('payload');
+  if(chosen)$('payloadLocalPath').value=chosen;
+}
+async function addLocalPayload(){
+  const status=$('payloadLocalStatus');status.className='banner';status.textContent='Adding local payload…';
+  try{
+    const d=await api('/api/payloads/add-local',{method:'POST',body:JSON.stringify({path:$('payloadLocalPath').value,name:$('payloadLocalName').value})});
+    status.className='banner good';status.textContent=(d.already_added?'Already in playlist: ':'Added to playlist: ')+d.item.filename+' · '+payloadHumanBytes(d.item.size)+'. The original file was not copied or modified.';
+    $('payloadLocalName').value='';
+    await loadPayloadPlaylist();
+  }catch(e){status.className='banner error';status.textContent=e.message}
+}
+async function removePayloadFromPlaylist(id){
+  const item=payloadPlaylistCache.find(x=>x.id===id);
+  if(!item)return;
+  if(!confirm('Remove "'+item.name+'" from the playlist? The file will remain on disk.'))return;
+  try{await api('/api/payloads/remove',{method:'POST',body:JSON.stringify({id})});await loadPayloadPlaylist()}
+  catch(e){alert(e.message)}
+}
+async function sendPayloadFromPlaylist(id,button){
+  const item=payloadPlaylistCache.find(x=>x.id===id);
+  if(!item)return;
+  const ip=$('payloadTargetIp').value.trim();
+  const port=Number($('payloadTargetPort').value||9021);
+  if(!ip){alert('Enter the PS5 LAN IP address first.');return}
+  if(!Number.isInteger(port)||port<1||port>65535){alert('Enter a valid TCP port.');return}
+  const confirmed=confirm('Send '+item.filename+' ('+payloadHumanBytes(item.size)+') to '+ip+':'+port+'?\\n\\nThe PS5 payload loader must already be listening on this port. Hermes can confirm bytes were sent, but cannot confirm payload execution or firmware compatibility.');
+  if(!confirmed)return;
+  if(button){button.disabled=true;button.textContent='Queueing…'}
+  try{
+    const d=await api('/api/payloads/send',{method:'POST',body:JSON.stringify({id,ip,port})});
+    await loadPayloadPlaylist();
+    pollPayloadJob(d.job.id);
+  }catch(e){alert(e.message)}
+  finally{if(button){button.disabled=false;button.textContent='Send'}}
+}
+async function pollPayloadJob(id){
+  try{
+    const job=await api('/api/payloads/jobs/'+encodeURIComponent(id));
+    await loadPayloadPlaylist();
+    if(['queued','connecting','sending'].includes(job.status)){
+      setTimeout(()=>pollPayloadJob(id),900);
+    }
+  }catch(e){/* History is held in-process and can clear when Hermes restarts. */}
+}
+async function loadPayloadPlaylist(){
+  if(payloadLoadBusy)return;
+  payloadLoadBusy=true;
+  try{
+    const data=await api('/api/payloads');
+    payloadPlaylistCache=data.items||[];
+    const playlist=$('payloadPlaylist');
+    if(!payloadPlaylistCache.length){
+      playlist.innerHTML='<div class="empty">Your playlist is empty. Add an official release above or browse for your own .elf/.bin/.payload file.</div>';
+    }else{
+      playlist.innerHTML='<div class="tablewrap"><table><thead><tr><th>Payload</th><th>Source / version</th><th>Size</th><th>Actions</th></tr></thead><tbody>'+payloadPlaylistCache.map(item=>{
+        const missing=!item.exists;
+        const source=item.source==='official'?'Official · '+(item.version||'release'):'Local file';
+        return '<tr><td><strong>'+esc(item.name)+'</strong><div class="muted path">'+esc(item.filename||item.path)+'</div>'+(missing?'<div class="muted" style="color:var(--red)">File missing — browse/add it again</div>':'')+'</td><td>'+esc(source)+(item.repository?'<div class="muted"><a href="'+esc(item.release_url||'#')+'" target="_blank" rel="noopener noreferrer">Release page ↗</a></div>':'')+'</td><td>'+esc(payloadHumanBytes(item.size))+'</td><td><div class="actions"><button class="primary payload-send" data-id="'+esc(item.id)+'" '+(missing?'disabled':'')+'>Send</button><button class="payload-remove" data-id="'+esc(item.id)+'">Remove</button></div></td></tr>';
+      }).join('')+'</tbody></table></div>';
+      playlist.querySelectorAll('.payload-send').forEach(btn=>btn.addEventListener('click',()=>sendPayloadFromPlaylist(btn.dataset.id,btn)));
+      playlist.querySelectorAll('.payload-remove').forEach(btn=>btn.addEventListener('click',()=>removePayloadFromPlaylist(btn.dataset.id)));
+    }
+    const jobs=$('payloadJobs');
+    const jobItems=data.jobs||[];
+    if(!jobItems.length){jobs.innerHTML='<div class="empty">No payload sends yet.</div>'}
+    else jobs.innerHTML=jobItems.map(job=>{
+      const state=job.status||'queued',done=Number(job.bytes_sent||0),total=Number(job.total_bytes||0);
+      const percent=total?Math.min(100,Math.round(done*100/total)):0;
+      const good=state==='sent',bad=state==='failed';
+      const detail=good?(job.message||'Bytes sent; execution not verified'):bad?(job.error||'Transfer failed'):(payloadHumanBytes(done)+' / '+payloadHumanBytes(total)+' sent');
+      return '<div class="job"><div class="jobtext"><strong>'+esc(job.name)+' → '+esc(job.target_ip)+':'+esc(job.target_port)+'</strong><div class="muted">'+esc(state)+' · '+esc(detail)+'</div>'+(!good&&!bad?'<div style="height:5px;background:#263243;border-radius:9px;margin-top:7px;overflow:hidden"><div style="height:100%;width:'+percent+'%;background:var(--accent)"></div></div>':'')+'</div><span class="badge '+(good?'good':bad?'warn':'')+'">'+esc(good?'Sent':bad?'Failed':state)+'</span></div>';
+    }).join('');
+  }catch(e){
+    $('payloadPlaylist').innerHTML='<div class="banner error">'+esc(e.message)+'</div>';
+  }finally{payloadLoadBusy=false}
+}
+
 async function choosePkgFile(){if(!window.hermesDesktop?.chooseFile){alert('Use launch-desktop.bat to enable native file selection.');return}const chosen=await window.hermesDesktop.chooseFile('pkg');if(chosen)$('pkgLocalPath').value=chosen}
 function ps5JobLabel(j){const x=j.payload||{};if(j.kind==='install')return x.phase==='done'||x.phase==='failed'?x.phase+' · '+(x.verdict||x.reason||''):(x.phase||'pending');if(x.Done)return 'completed';if(x.Failed)return 'failed';if(x.Cancelled)return 'cancelled';if(x.Running)return 'running';return x.state||x.status||x.phase||(x.job&&x.job.state)||'pending'}
 function renderTrackedPs5Jobs(){const host=$('ps5JobHistory');if(!host)return;host.innerHTML=trackedPs5Jobs.map(j=>'<div class="job"><div class="jobtext"><strong>'+esc(j.kind==='install'?'PKG install':'PS5 file transfer')+' · '+esc(j.job_id)+'</strong><div class="muted">'+esc(j.local_path||j.remote_path||'')+'</div><div class="muted">'+esc(j.status||'queued')+(j.updated_at?' · '+new Date(j.updated_at).toLocaleTimeString():'')+'</div>'+(j.error?'<div class="muted" style="color:var(--red)">'+esc(j.error)+'</div>':'')+'</div><button onclick="refreshOnePs5Job(\''+esc(j.job_id)+'\')">Refresh</button></div>').join('')||'<div class="empty">No PS5Upload jobs submitted yet.</div>'}

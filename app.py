@@ -1130,7 +1130,7 @@ def api_storage_scan():
         return jsonify({"error": "Could not scan folder: " + str(exc)}), 500
 
     duplicate_candidates = [
-        {"name": key[0], "bytes": key[1], "paths": paths}
+        {"name": key[0], "bytes": key[1], "paths": paths[:10], "matches": len(paths)}
         for key, paths in same_name_size.items()
         if len(paths) > 1
     ]

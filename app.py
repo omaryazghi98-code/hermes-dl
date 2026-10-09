@@ -567,6 +567,13 @@ def choose_prosperopatches_image(page_html: str, media_images: list[Any]) -> str
 
 
 def resolve_title_with_crawl4ai(ppsa: str) -> tuple[str | None, str | None, str | None]:
+    # A title imported from the visible browser is a trusted local override and
+    # avoids repeating a failed headless lookup for this title ID.
+    overrides = load_json(DATA_DIR / "title_overrides.json", {})
+    saved = overrides.get(ppsa) if isinstance(overrides, dict) else None
+    if isinstance(saved, dict) and saved.get("title"):
+        return str(saved["title"]), None, str(saved.get("source") or prosperopatches_url(ppsa))
+
     # ProsperoPatches is authoritative for a PPSA. Try its canonical page directly
     # first; only fall back to a browser crawl if the normal HTTP response does not
     # expose the metadata.
@@ -1268,7 +1275,19 @@ def api_resolve_from_browser():
         preferred_cover = None
 
     _, cover_name = download_cover(title, ppsa, preferred_cover)
-    activity("Imported visible-browser metadata for " + ppsa + " → " + title)
+    override_file = DATA_DIR / "title_overrides.json"
+    overrides = load_json(override_file, {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+    overrides[ppsa] = {
+        "title": title,
+        "source": prosperopatches_url(ppsa),
+        "cover": cover_name,
+        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "resolver": "visible-browser",
+    }
+    save_json(override_file, overrides)
+    activity("Saved visible-browser metadata override for " + ppsa + " → " + title)
     return jsonify({
         "title_id": ppsa,
         "title": title,

@@ -1,4 +1,6 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, session } = require("electron");
+const { ElectronBlocker } = require("@ghostery/adblocker-electron");
+const fetch = require("cross-fetch");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -9,10 +11,183 @@ let backendExited = false;
 let shuttingDown = false;
 let backendExitInfo = null;
 let mainWindow = null;
+let browserSession = null;
+let browserAdBlocker = null;
+let browserFallbackActive = false;
+let browserAdBlockEnabled = true;
+let browserAdBlockState = {
+  ready: false,
+  enabled: true,
+  mode: "loading",
+  message: "Preparing ad filters…"
+};
+const BROWSER_PARTITION = "persist:hermes-browser";
+const FALLBACK_AD_DOMAINS = [
+  "doubleclick.net",
+  "googlesyndication.com",
+  "googleadservices.com",
+  "adservice.google.com",
+  "adnxs.com",
+  "adsrvr.org",
+  "adform.net",
+  "taboola.com",
+  "outbrain.com",
+  "criteo.com",
+  "pubmatic.com",
+  "openx.net",
+  "rubiconproject.com",
+  "amazon-adsystem.com",
+  "zedo.com",
+  "adroll.com",
+  "smartadserver.com"
+];
 const root = path.resolve(__dirname, "..");
 const python = path.join(root, ".venv", "Scripts", "python.exe");
 const appScript = path.join(root, "app.py");
 const baseUrl = "http://127.0.0.1:8765/manager";
+
+function browserAdSettingsPath() {
+  return path.join(app.getPath("userData"), "hermes-browser-settings.json");
+}
+
+function loadBrowserAdBlockPreference() {
+  try {
+    const settings = JSON.parse(fs.readFileSync(browserAdSettingsPath(), "utf8"));
+    return settings.adBlockingEnabled !== false;
+  } catch (_) {
+    return true;
+  }
+}
+
+function saveBrowserAdBlockPreference(enabled) {
+  try {
+    fs.mkdirSync(path.dirname(browserAdSettingsPath()), { recursive: true });
+    fs.writeFileSync(browserAdSettingsPath(), JSON.stringify({ adBlockingEnabled: enabled }, null, 2));
+  } catch (error) {
+    console.warn("[Hermes] Could not persist ad-block preference:", error.message);
+  }
+}
+
+function hostnameIsAdDomain(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/\.$/, "");
+  return FALLBACK_AD_DOMAINS.some(domain => host === domain || host.endsWith("." + domain));
+}
+
+function installFallbackAdFilter() {
+  if (!browserSession) return;
+  browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+    let cancel = false;
+    try {
+      const url = new URL(details.url);
+      cancel = url.protocol !== "file:" && hostnameIsAdDomain(url.hostname);
+    } catch (_) {}
+    callback({ cancel });
+  });
+  browserFallbackActive = true;
+}
+
+function disableFallbackAdFilter() {
+  if (!browserSession || !browserFallbackActive) return;
+  browserSession.webRequest.onBeforeRequest(null);
+  browserFallbackActive = false;
+}
+
+async function fetchFilterResource(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function initializeBrowserAdBlocking() {
+  browserSession = session.fromPartition(BROWSER_PARTITION);
+  browserAdBlockEnabled = loadBrowserAdBlockPreference();
+  browserAdBlockState = {
+    ready: false,
+    enabled: browserAdBlockEnabled,
+    mode: "loading",
+    message: "Loading the EasyList-compatible ad and tracker filters…"
+  };
+
+  const cacheDir = path.join(app.getPath("userData"), "hermes-browser");
+  const cachePath = path.join(cacheDir, "adblocker-engine.bin");
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    try {
+      browserAdBlocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetchFilterResource, {
+        path: cachePath,
+        read: filePath => fs.promises.readFile(filePath),
+        write: (filePath, contents) => fs.promises.writeFile(filePath, contents)
+      });
+    } catch (cacheOrNetworkError) {
+      // A stale/corrupt cache can fail to deserialize. Try once without cached state.
+      try { fs.unlinkSync(cachePath); } catch (_) {}
+      browserAdBlocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetchFilterResource);
+      try { await fs.promises.writeFile(cachePath, browserAdBlocker.serialize()); } catch (_) {}
+    }
+
+    if (browserAdBlockEnabled) {
+      browserAdBlocker.enableBlockingInSession(browserSession);
+    } else {
+      browserAdBlocker.disableBlockingInSession(browserSession);
+    }
+    browserAdBlockState = {
+      ready: true,
+      enabled: browserAdBlockEnabled,
+      mode: "EasyList ads + tracking",
+      message: browserAdBlockEnabled
+        ? "Ad and tracker filter lists are active in the integrated browser."
+        : "Ad blocking is off. Enable it here to filter ads and trackers."
+    };
+  } catch (error) {
+    browserAdBlocker = null;
+    if (browserAdBlockEnabled) installFallbackAdFilter();
+    browserAdBlockState = {
+      ready: true,
+      enabled: browserAdBlockEnabled,
+      mode: "basic fallback",
+      message: browserAdBlockEnabled
+        ? "Full filter lists could not load. Basic ad-domain blocking is active instead (" + error.message + ")."
+        : "Full filter lists could not load. Basic ad-domain blocking is off."
+    };
+    console.warn("[Hermes] Advanced ad filtering unavailable:", error.message);
+  }
+  return { ...browserAdBlockState };
+}
+
+function setBrowserAdBlockEnabled(enabled) {
+  browserAdBlockEnabled = enabled === true;
+  if (browserAdBlocker) {
+    if (browserAdBlockEnabled) {
+      browserAdBlocker.enableBlockingInSession(browserSession);
+    } else {
+      browserAdBlocker.disableBlockingInSession(browserSession);
+    }
+    browserFallbackActive = false;
+  } else if (browserAdBlockEnabled) {
+    installFallbackAdFilter();
+  } else {
+    disableFallbackAdFilter();
+  }
+  browserAdBlockState = {
+    ...browserAdBlockState,
+    ready: true,
+    enabled: browserAdBlockEnabled,
+    message: browserAdBlockEnabled
+      ? (browserAdBlockState.mode === "basic fallback"
+        ? "Basic ad-domain blocking is active; the full filter list could not be loaded."
+        : "Ad and tracker filtering is active in the integrated browser.")
+      : "Ad blocking is off."
+  };
+  saveBrowserAdBlockPreference(browserAdBlockEnabled);
+  return { ...browserAdBlockState };
+}
+
+ipcMain.handle("hermes:adblock:get-status", () => ({ ...browserAdBlockState }));
+ipcMain.handle("hermes:adblock:set-enabled", (_event, enabled) => setBrowserAdBlockEnabled(enabled));
 
 function portIsAvailable(port) {
   return new Promise(resolve => {
@@ -116,6 +291,7 @@ async function createWindow() {
     app.quit();
     return;
   }
+  await initializeBrowserAdBlocking();
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 960,

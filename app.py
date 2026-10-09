@@ -1266,8 +1266,11 @@ def api_resolve_from_browser():
     if urllib.parse.urlparse(source_url).hostname not in {"prosperopatches.com", "www.prosperopatches.com"}:
         return jsonify({"error": "Metadata can only be imported from ProsperoPatches."}), 400
 
-    title = safe_name(str(data.get("title") or "").strip())
-    if not title or title.upper() == ppsa or len(title) > 150:
+    raw_title = str(data.get("title") or "").strip()
+    if not raw_title or len(raw_title) > 250:
+        return jsonify({"error": "The browser page did not expose a usable game title."}), 400
+    title = safe_name(raw_title)
+    if title.upper() in {ppsa, "UNKNOWN DOWNLOAD", "PROSPEROPATCHES.COM"}:
         return jsonify({"error": "The browser page did not expose a usable game title."}), 400
 
     preferred_cover = str(data.get("cover") or "").strip() or None

@@ -1437,9 +1437,10 @@ def api_download_with_idm():
         return jsonify({"error": "Enter a direct HTTP or HTTPS download URL without embedded credentials."}), 400
     destination_key = str(data.get("destination") or "download_root")
     allowed = {"download_root": CONFIG["download_root"], "game_root": CONFIG["game_root"], "inbox_root": CONFIG["inbox_root"]}
-    destination = Path(allowed.get(destination_key, ""))
-    if not str(destination):
+    destination_value = allowed.get(destination_key)
+    if not destination_value:
         return jsonify({"error": "Choose a valid destination folder."}), 400
+    destination = Path(destination_value)
     filename = safe_name(str(data.get("filename") or "").strip() or posixpath.basename(parsed.path) or "download.bin")
     if filename in {"", ".", ".."}:
         return jsonify({"error": "Filename is invalid."}), 400
@@ -1517,7 +1518,7 @@ def api_ftp_list():
                 items.append({"name": name, "path": item_path, "is_dir": is_dir, "size": size})
         items.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
         return jsonify({"ok": True, "host": CONFIG.get("ftp_host") or data.get("host") or CONFIG.get("ps5_ip"), "path": current, "items": items})
-    except (ValueError, OSError, ftplib.all_errors) as exc:
+    except Exception as exc:
         return jsonify({"error": "FTP browse failed: " + str(exc)}), 502
     finally:
         if ftp:

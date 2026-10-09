@@ -65,6 +65,7 @@
   <div class="muted">Checks configured folders and optional companion executables, shows drive space, and flags missing paths or duplicate folder targets. Creating folders never moves existing files; paths outside the selected drive are reported but not created.</div>
   <div class="field"><label>Drive / folder to manage (D: is the default)</label><input id="scanRoot" value="D:\" spellcheck="false"></div>
   <div id="driveHealthSummary" class="banner">Run the path audit to check the selected drive.</div>
+  <div id="pathRepairResult" class="banner">No folder repair has been run.</div>
   <div id="pathAuditResults"></div>
   <div id="toolAuditResults" class="grid2" style="margin-top:12px"></div>
  </div>
@@ -72,6 +73,7 @@
   <div class="sectionhead"><h2>Organize loose files</h2><div class="actions"><button onclick="previewOrganization()">Preview organization plan</button><button class="primary" onclick="moveSelectedOrganizerFiles()">Move selected files</button></div></div>
   <div class="muted">Preview lists only recognized files directly inside the selected folder; it does not recurse into subfolders. All suggestions start unchecked. Directories, unknown files, RAR sets and recognized split archives are left alone. Selected files move into type-based folders under <code>_Organized</code>; existing destinations are never overwritten. Hermes' installation and configured staging folders are protected.</div>
   <div id="organizeSummary" class="banner">Build a preview before moving anything.</div>
+  <div id="organizeActionResult" class="banner">No files moved.</div>
   <div id="organizeResults"></div>
  </div>
  <div class="card" style="margin-top:14px">
@@ -206,7 +208,7 @@
 <script>
 const $=id=>document.getElementById(id);const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let cfg={},lastJobs=[];
 const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['D: Drive Manager','Audit configured paths, organize reviewed loose files, and inspect storage safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],payloads:['Payload Sender','Manage a local payload playlist and send selected files to the PS5.'],settings:['Settings','Configure folders and companion applications.']};
-function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage'){setIfIdle('scanRoot','D:\\');auditDrivePaths()}if(name==='payloads')loadPayloadWorkspace();}
+function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage'){$('scanRoot').value=$('scanRoot').value||'D:\\';auditDrivePaths()}if(name==='payloads')loadPayloadWorkspace();}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
 async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opts});const d=await r.json();if(!r.ok)throw Error(d.error||('Request failed '+r.status));return d}
 function bytes(n){n=Number(n||0);let u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
@@ -485,7 +487,7 @@ async function auditDrivePaths(){
 async function createMissingPaths(){
   const root=$('scanRoot').value.trim()||'D:\\';
   if(!confirm('Create missing configured folders that are inside '+root+'? This creates directories only; it will not move, rename, overwrite or delete any files. Paths outside this scope or overlapping the Hermes installation will be skipped.'))return;
-  const summary=$('driveHealthSummary');summary.className='banner';summary.textContent='Creating only safe, missing configured directories…';
+  const summary=$('pathRepairResult');summary.className='banner';summary.textContent='Creating only safe, missing configured directories…';
   try{
     const d=await api('/api/storage/paths/create-missing',{method:'POST',body:JSON.stringify({root})});
     const created=(d.created||[]).map(item=>item.label+': '+item.path);
@@ -520,7 +522,7 @@ async function moveSelectedOrganizerFiles(){
   const root=$('scanRoot').value.trim()||'D:\\';
   const lines=selected.slice(0,8).join('\n')+(selected.length>8?'\n…and '+(selected.length-8)+' more':'');
   if(!confirm('Move '+selected.length+' selected file(s) out of the current folder?\n\n'+lines+'\n\nThey will go to the previewed type folders under _Organized. Existing files will not be overwritten. Folders and unselected files will remain untouched.'))return;
-  const summary=$('organizeSummary');summary.className='banner';summary.textContent='Moving only the selected files…';
+  const summary=$('organizeActionResult');summary.className='banner';summary.textContent='Moving only the selected files…';
   try{
     const d=await api('/api/storage/organize/move-selected',{method:'POST',body:JSON.stringify({root,filenames:selected})});
     const moved=(d.moved||[]).map(item=>item.filename+' → '+item.to);

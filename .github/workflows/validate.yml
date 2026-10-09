@@ -20,12 +20,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install test dependencies
+        run: python -m pip install "Flask>=3.1,<4" "requests>=2.32,<3"
       - name: Compile Python backend
         run: python -m py_compile app.py
+      - name: Run integration safety tests
+        run: python -m unittest discover -s tests -v
       - name: Validate desktop package metadata
         run: python -m json.tool desktop/package.json > /dev/null
-      - name: Check Electron main process syntax
-        run: node --check desktop/main.cjs
+      - name: Check Electron process syntax
+        run: |
+          node --check desktop/main.cjs
+          node --check desktop/preload.cjs
       - name: Check inline manager JavaScript syntax
         run: |
           python - <<'PY'

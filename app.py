@@ -1080,6 +1080,7 @@ def api_storage_scan():
     }
     extensions: dict[str, dict[str, int]] = {}
     largest: list[dict[str, Any]] = []
+    same_name_size: dict[tuple[str, int], list[str]] = {}
     total_bytes = 0
     file_count = 0
     directory_count = 0
@@ -1113,11 +1114,20 @@ def api_storage_scan():
                 bucket = extensions.setdefault(ext, {"count": 0, "bytes": 0})
                 bucket["count"] += 1
                 bucket["bytes"] += size
+                key = (filename.lower(), size)
+                same_name_size.setdefault(key, []).append(str(path))
                 remember_large(path, size)
             if truncated:
                 break
     except OSError as exc:
         return jsonify({"error": "Could not scan folder: " + str(exc)}), 500
+
+    duplicate_candidates = [
+        {"name": key[0], "bytes": key[1], "paths": paths}
+        for key, paths in same_name_size.items()
+        if len(paths) > 1
+    ]
+    duplicate_candidates.sort(key=lambda item: (len(item["paths"]), item["bytes"]), reverse=True)
 
     return jsonify({
         "root": str(root.resolve()),
@@ -1128,6 +1138,7 @@ def api_storage_scan():
         "truncated": truncated,
         "extensions": extensions,
         "large": largest,
+        "duplicate_candidates": duplicate_candidates[:50],
     })
 
 

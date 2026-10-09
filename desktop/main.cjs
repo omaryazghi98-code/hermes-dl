@@ -20,7 +20,7 @@ function startBackend() {
   fs.mkdirSync(dataDir, { recursive: true });
   const logPath = path.join(dataDir, "backend.log");
   const logFd = fs.openSync(logPath, "a");
-  fs.writeSync(logFd, "\\n\\n=== Hermes Manager start " + new Date().toISOString() + " ===\\n");
+  fs.writeSync(logFd, String.fromCharCode(10, 10) + "=== Hermes Manager start " + new Date().toISOString() + " ===" + String.fromCharCode(10));
   backend = spawn(python, [appScript], {
     cwd: root,
     env: { ...process.env, HERMES_DESKTOP: "1" },

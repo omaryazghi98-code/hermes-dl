@@ -1,0 +1,40 @@
+name: Validate Hermes Manager
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile Python backend
+        run: python -m py_compile app.py
+      - name: Validate desktop package metadata
+        run: python -m json.tool desktop/package.json > /dev/null
+      - name: Check Electron main process syntax
+        run: node --check desktop/main.cjs
+      - name: Check inline manager JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          source = Path("templates/manager.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", source, flags=re.S)
+          if not scripts:
+              raise SystemExit("No inline JavaScript block found")
+          Path("manager-inline.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check manager-inline.js

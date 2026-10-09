@@ -382,6 +382,7 @@ class HermesIntegrationTests(unittest.TestCase):
             collision_source = root / "collision.pdf"
             moved_source.write_bytes(b"move me")
             collision_source.write_bytes(b"preserve original")
+            (root / "unrecognized.bin").write_bytes(b"leave alone")
             collision_dir = root / "_Organized" / "Documents"
             collision_dir.mkdir(parents=True)
             collision_destination = collision_dir / "collision.pdf"

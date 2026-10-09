@@ -1,3 +1,5 @@
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -155,6 +157,71 @@ class HermesIntegrationTests(unittest.TestCase):
                 self.assertEqual(removed.get_json()["items"], [])
                 self.assertTrue(payload.exists(), "Removing a playlist entry must not delete the payload file")
 
+    def test_payload_official_download_verifies_digest_and_saves_to_playlist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            content = b"abcdef"
+            digest = hashlib.sha256(content).hexdigest()
+            release = {
+                "repository": "etaHEN/etaHEN",
+                "label": "etaHEN",
+                "tag": "v1-test",
+                "url": "https://github.com/etaHEN/etaHEN/releases/tag/v1-test",
+                "assets": [{
+                    "name": "payload.elf",
+                    "size": len(content),
+                    "download_count": 1,
+                    "digest": "sha256:" + digest,
+                }],
+            }
+            api_response = MagicMock()
+            api_response.json.return_value = {
+                "tag_name": "v1-test",
+                "assets": [{
+                    "name": "payload.elf",
+                    "size": len(content),
+                    "digest": "sha256:" + digest,
+                    "browser_download_url": "https://github.com/etaHEN/etaHEN/releases/download/v1-test/payload.elf",
+                }],
+            }
+            download_response = MagicMock()
+            download_response.__enter__.return_value = download_response
+            download_response.iter_content.return_value = [b"abc", b"def"]
+            with patch.object(hermes, "fetch_latest_payload_release", return_value=release), \\
+                 patch.object(hermes, "PAYLOAD_DOWNLOAD_DIR", root / "payloads"), \\
+                 patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", root / "playlist.json"), \\
+                 patch.object(hermes.requests, "get", side_effect=[api_response, download_response]), \\
+                 patch.object(hermes, "activity"):
+                response = self.client.post("/api/payloads/releases/download", json={
+                    "repository": "etaHEN/etaHEN",
+                    "asset_name": "payload.elf",
+                })
+            self.assertEqual(response.status_code, 201, response.get_json())
+            item = response.get_json()["item"]
+            saved_path = Path(item["path"])
+            self.assertEqual(saved_path.read_bytes(), content)
+            self.assertEqual(item["sha256"], digest)
+            self.assertEqual(item["source"], "official")
+
+    def test_payload_playlist_reorder_requires_all_ids_and_persists_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            file_a, file_b = root / "a.elf", root / "b.elf"
+            file_a.write_bytes(b"a")
+            file_b.write_bytes(b"b")
+            playlist_file = root / "playlist.json"
+            playlist_file.write_text(json.dumps([
+                {"id": "a", "name": "A", "path": str(file_a)},
+                {"id": "b", "name": "B", "path": str(file_b)},
+            ]), encoding="utf-8")
+            with patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", playlist_file):
+                invalid = self.client.post("/api/payloads/reorder", json={"ids": ["b"]})
+                self.assertEqual(invalid.status_code, 400)
+                valid = self.client.post("/api/payloads/reorder", json={"ids": ["b", "a"]})
+            self.assertEqual(valid.status_code, 200, valid.get_json())
+            self.assertEqual([item["id"] for item in valid.get_json()["items"]], ["b", "a"])
+            self.assertEqual([item["id"] for item in json.loads(playlist_file.read_text(encoding="utf-8"))], ["b", "a"])
+
     def test_payload_local_file_rejects_unexpected_extension(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -172,7 +239,7 @@ class HermesIntegrationTests(unittest.TestCase):
             payload.write_bytes(b"payload")
             playlist = [{"id": "payload-test", "path": str(payload), "name": "Test payload", "filename": payload.name}]
             playlist_file = root / "playlist.json"
-            playlist_file.write_text(__import__("json").dumps(playlist), encoding="utf-8")
+            playlist_file.write_text(json.dumps(playlist), encoding="utf-8")
             with patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", playlist_file), patch.object(hermes, "activity"):
                 with patch.object(hermes.threading, "Thread") as thread:
                     response = self.client.post("/api/payloads/send", json={

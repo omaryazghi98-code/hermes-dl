@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -45,6 +45,18 @@ async function waitForServer() {
   return false;
 }
 
+ipcMain.handle("hermes:choose-file", async (_event, kind) => {
+  const filters = kind === "executable"
+    ? [{ name: "Windows applications", extensions: ["exe"] }]
+    : [{ name: "All files", extensions: ["*"] }];
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title: kind === "executable" ? "Choose application executable" : "Choose local transfer file",
+    properties: ["openFile"],
+    filters
+  });
+  return result.canceled || !result.filePaths.length ? null : result.filePaths[0];
+});
+
 async function createWindow() {
   startBackend();
   if (!backend) return;
@@ -63,6 +75,7 @@ async function createWindow() {
     title: "Hermes Manager",
     webPreferences: {
       webviewTag: true,
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true

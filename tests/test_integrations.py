@@ -134,6 +134,104 @@ class HermesIntegrationTests(unittest.TestCase):
             self.assertIn("System packages", response.get_json()["error"])
             self.assertEqual(request.call_count, 1, "Should reject before invoking the install endpoint")
 
+    def test_payload_local_file_is_added_and_removed_without_deleting_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            payload = root / "my_payload.elf"
+            payload.write_bytes(b"known payload bytes")
+            playlist_file = root / "playlist.json"
+            with patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", playlist_file), patch.object(hermes, "activity"):
+                added = self.client.post("/api/payloads/add-local", json={
+                    "path": str(payload),
+                    "name": "My payload",
+                })
+                self.assertEqual(added.status_code, 201, added.get_json())
+                item = added.get_json()["item"]
+                self.assertTrue(payload.exists())
+                self.assertEqual(item["name"], "My payload")
+                self.assertTrue(item["exists"])
+                removed = self.client.post("/api/payloads/remove", json={"id": item["id"]})
+                self.assertEqual(removed.status_code, 200, removed.get_json())
+                self.assertEqual(removed.get_json()["items"], [])
+                self.assertTrue(payload.exists(), "Removing a playlist entry must not delete the payload file")
+
+    def test_payload_local_file_rejects_unexpected_extension(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            payload = root / "not-a-payload.exe"
+            payload.write_bytes(b"not a payload")
+            with patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", root / "playlist.json"):
+                response = self.client.post("/api/payloads/add-local", json={"path": str(payload)})
+            self.assertEqual(response.status_code, 400)
+            self.assertIn(".elf, .bin or .payload", response.get_json()["error"])
+
+    def test_payload_sender_rejects_public_ip_before_queueing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            payload = root / "demo.elf"
+            payload.write_bytes(b"payload")
+            playlist = [{"id": "payload-test", "path": str(payload), "name": "Test payload", "filename": payload.name}]
+            playlist_file = root / "playlist.json"
+            playlist_file.write_text(__import__("json").dumps(playlist), encoding="utf-8")
+            with patch.object(hermes, "PAYLOAD_PLAYLIST_FILE", playlist_file), patch.object(hermes, "activity"):
+                with patch.object(hermes.threading, "Thread") as thread:
+                    response = self.client.post("/api/payloads/send", json={
+                        "id": "payload-test",
+                        "ip": "8.8.8.8",
+                        "port": 9021,
+                    })
+            self.assertEqual(response.status_code, 400)
+            thread.assert_not_called()
+
+    def test_payload_sender_worker_writes_file_bytes_and_marks_transfer_sent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            payload = Path(temp) / "demo.bin"
+            payload.write_bytes(b"exact payload data")
+            hermes.PAYLOAD_JOBS["test-job"] = {"id": "test-job", "status": "queued", "created_at": 1}
+            mock_socket = MagicMock()
+            mock_socket.__enter__.return_value = mock_socket
+            try:
+                with patch.object(hermes.socket, "create_connection", return_value=mock_socket) as connect, patch.object(hermes, "activity"):
+                    hermes.payload_sender_worker("test-job", str(payload), "192.168.1.40", 9021)
+                connect.assert_called_once_with(("192.168.1.40", 9021), timeout=6)
+                mock_socket.sendall.assert_called_once_with(b"exact payload data")
+                self.assertEqual(hermes.PAYLOAD_JOBS["test-job"]["status"], "sent")
+                self.assertEqual(hermes.PAYLOAD_JOBS["test-job"]["bytes_sent"], len(b"exact payload data"))
+                self.assertIn("does not confirm", hermes.PAYLOAD_JOBS["test-job"]["message"])
+            finally:
+                hermes.PAYLOAD_JOBS.pop("test-job", None)
+
+    def test_payload_release_metadata_is_from_allowlisted_official_source(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "draft": False,
+            "prerelease": False,
+            "tag_name": "v99-test",
+            "name": "Test release",
+            "published_at": "2026-01-01T00:00:00Z",
+            "html_url": "https://github.com/etaHEN/etaHEN/releases/tag/v99-test",
+            "body": "Test notes",
+            "assets": [{
+                "name": "payload.elf",
+                "size": 12,
+                "download_count": 5,
+                "digest": "sha256:abc",
+                "browser_download_url": "https://github.com/etaHEN/etaHEN/releases/download/v99-test/payload.elf",
+            }, {
+                "name": "source.zip",
+                "size": 100,
+                "download_count": 2,
+                "browser_download_url": "https://github.com/etaHEN/etaHEN/releases/download/v99-test/source.zip",
+            }],
+        }
+        with patch.object(hermes.requests, "get", return_value=mock_response):
+            release = hermes.fetch_latest_payload_release("etaHEN/etaHEN")
+        self.assertEqual(release["tag"], "v99-test")
+        self.assertEqual([asset["name"] for asset in release["assets"]], ["payload.elf"])
+        with self.assertRaises(ValueError):
+            hermes.fetch_latest_payload_release("untrusted-user/untrusted-repo")
+
     def test_ftp_path_rejects_traversal(self):
         with self.assertRaises(ValueError):
             hermes.ftp_remote_path("/data/homebrew/../../system")

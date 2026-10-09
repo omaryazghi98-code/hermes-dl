@@ -1077,7 +1077,7 @@ def api_storage_scan():
         if not root_text or not root.exists() or not root.is_dir():
             return jsonify({"error": "Choose an existing folder or drive."}), 400
         limit = max(100, min(50000, int(data.get("limit", 10000))))
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400
 
     excluded = {

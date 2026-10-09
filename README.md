@@ -1,109 +1,69 @@
-# Hermes DL
+# Hermes Manager
 
-Hermes DL is now a local Windows download organizer for large PS5/game archives.
+Hermes Manager is a local-first Windows desktop organizer for downloads, PS5 archives, game metadata, and storage cleanup reviews. The existing Flask-based download watcher remains the backend; the desktop shell is Electron, with an embedded visible Chromium browser for sites that need JavaScript or manual interaction.
 
-It watches an IDM staging folder, groups multipart RAR sets, waits for the set to stop changing, tests the archive with WinRAR, resolves PS5 PPSA title IDs with Crawl4AI, downloads a cover, and extracts each game into its own folder.
+## Launch the desktop app
 
-## Default layout
+1. Install **Python 3.11+** and **Node.js LTS** on Windows.
+2. Make sure WinRAR is installed if you want archive testing and extraction.
+3. Run `launch-desktop.bat`.
+4. On first run, the launcher creates the Python environment, installs Python dependencies, and installs Electron. Subsequent launches reuse the environment.
+5. Hermes opens as a desktop window. The browser panel uses a persistent Electron session.
 
-```
-D:\
-├── _TEMP\
-│   ├── IDM\
-│   └── RAR\
-├── _Automation\
-│   └── IDM-AutoExtract\
-├── _INBOX\
-└── PS5\
-    └── Games\
-        └── Incoming\
-```
+The existing browser-based version is still available with `start.bat` at `http://127.0.0.1:8765`.
 
-The watcher and extracted metadata stay outside the IDM/RAR staging folders. The RAR staging directory is reserved for archive work/WinRAR temporary files, not the watcher itself.
+## Features
 
-## What the watcher does
+- **Download queue:** watches the configured IDM staging folder, groups multipart RAR files, waits for files to stop changing, tests archives with WinRAR, and extracts verified sets.
+- **PPSA identification:** detects title IDs such as `PPSA22327` and resolves game title and cover metadata using the canonical ProsperoPatches page.
+- **Visible browser fallback:** the Browser tab is a real embedded Chromium browser in the Electron desktop app. Navigate to a ProsperoPatches title page, then use **Use current browser page metadata** on the PS5 Library page if automated lookup does not work.
+- **PS5 library view:** shows recognized jobs, title IDs, artwork, and destinations.
+- **Storage scanner:** read-only inventory of a selected folder or drive, including file-type counts, largest files, and possible duplicate candidates based on matching filename and size.
+- **Folder shortcuts and settings:** open configured folders and update the staging, temporary, game, and inbox paths.
+- **Activity log:** recent watcher and metadata activity.
 
-For a set such as:
-
-```
-[DLPSGAME.COM]-PPSA22327.part01.rar
-[DLPSGAME.COM]-PPSA22327.part02.rar
-...
-[DLPSGAME.COM]-PPSA22327.part20.rar
-```
-
-Hermes groups the parts together using the archive base name, waits for the files to become stable, then runs a WinRAR integrity test against the root archive.
-
-Only a successful WinRAR test is allowed to proceed to extraction.
-
-For a detected PPSA, Hermes opens the canonical ProsperoPatches page:
-
-https://prosperopatches.com/PPSAxxxxx
-
-It uses the page's own title/heading and image metadata first, then falls back to a Crawl4AI browser crawl when the normal HTTP response does not expose the metadata. Covers are cached under:
+## Default folder layout
 
 ```
-D:\_Automation\IDM-AutoExtract\covers\
+D:\\
+├── _TEMP\\
+│   ├── IDM\\
+│   └── RAR\\
+├── _Automation\\
+│   └── IDM-AutoExtract\\
+├── _INBOX\\
+└── PS5\\
+    └── Games\\
+        └── Incoming\\
 ```
 
-The final game folder becomes:
+Paths can be changed from Settings. The scanner defaults to `D:\\` and inspects up to 10,000 files per scan by default; the limit is configurable up to 50,000. A partial scan is clearly reported when the limit is reached.
 
-```
-D:\PS5\Games\Incoming\Game Name [PPSAxxxxx]\
-├── cover.jpg / cover.png / cover.webp
-├── metadata.json
-├── .hermes-complete
-└── extracted game contents...
-```
+## Safety rules
 
-If a PPSA cannot be resolved, the archive is still handled, but it falls back to:
+- Hermes does **not** delete source archives after extraction.
+- Storage scans are read-only. Duplicate candidates are only files sharing a filename and size; they are not proof of identical contents.
+- Nothing is moved, renamed, or deleted by the storage scanner.
+- Archive sets must pass a WinRAR integrity test before extraction.
+- Unknown/unresolved metadata falls back to the configured inbox.
+- Use the scanner's results as a review list, not as automatic cleanup instructions.
 
-```
-D:\_INBOX\
-```
+## Metadata source
 
-## Installation
+The canonical title page format is:
 
-Run:
+`https://prosperopatches.com/PPSAxxxxx`
 
-```
-start.bat
-```
+Hermes first tries ordinary HTTP metadata and the existing Crawl4AI fallback. When a site requires a visible browser session, use the integrated Browser tab and import the rendered page metadata manually.
 
-The first run creates a Python virtual environment, installs the pinned Crawl4AI release, and installs its browser dependencies.
+## Local data
 
-Crawl4AI's current open-source release used here is v0.9.4.
+Runtime configuration, watcher state, and activity logs are stored under the local `data/` directory, which is ignored by Git. Cover images are cached under the configured automation directory.
 
-## WinRAR
+## Troubleshooting
 
-Hermes searches the standard Windows WinRAR installation locations and passes its temporary work directory as:
-
-```
-D:\_TEMP\RAR
-```
-
-so the system drive is not used as the archive workspace.
-
-## Important
-
-Hermes deliberately does **not** delete source archives after extraction. This is intentional: completed archives remain available until you verify the extracted result.
-
-It also keeps failed/incomplete multipart sets in the IDM staging folder and retries them when the set changes or the retry window expires.
-
-## UI
-
-Open:
-
-```
-http://127.0.0.1:8765
-```
-
-The dashboard shows:
-
-- watcher status
-- WinRAR / Crawl4AI status
-- staging paths
-- recent archive jobs
-- activity log
-- manual PPSA resolver
-- manual scan/start/stop controls
+- **Python not found:** install Python 3.11+ and ensure the `py` launcher is available.
+- **Node/npm not found:** install Node.js LTS and rerun `launch-desktop.bat`.
+- **WinRAR missing:** install WinRAR; extraction and archive tests need it.
+- **Desktop window cannot connect:** check that port 8765 is not already occupied by another service.
+- **Browser panel unavailable:** the embedded browser works in the Electron desktop app; when opening the Flask UI in an ordinary browser, the page provides a fallback message instead.

@@ -19,7 +19,8 @@
   <button data-page="library"><span class="ico">▣</span>PS5 Library</button>
   <button data-page="browser"><span class="ico">◎</span>Browser</button>
   <button data-page="storage"><span class="ico">▤</span>Storage scanner</button>
-  <button data-page="downloads"><span class="ico">⇩</span>Download queue</button>
+  <button data-page="downloads"><span class="ico">⇩</span>Download center</button>
+  <button data-page="console"><span class="ico">⌁</span>Console & transfers</button>
   <button data-page="settings"><span class="ico">⚙</span>Settings</button>
  </nav>
  <div class="side-note">Safety mode<br><br>Scan and review first. Hermes never deletes files automatically.</div>
@@ -61,19 +62,82 @@
  </div>
 </section>
 <section class="page" id="page-downloads">
- <div class="card"><div class="sectionhead"><h2>Download & extraction queue</h2><div class="actions"><button class="primary" onclick="startWatcher()">Start watcher</button><button class="danger" onclick="stopWatcher()">Stop watcher</button><button onclick="scanNow()">Scan now</button></div></div><div class="muted">Completed archive sets are tested with WinRAR before extraction. Source archives are preserved.</div><div id="allJobs" class="empty">Loading…</div></div>
+ <div class="card">
+  <div class="sectionhead"><h2>Send a download to IDM</h2><span class="badge">Uses IDM's official command-line interface</span></div>
+  <div class="muted">Paste a direct HTTP/HTTPS URL. Hermes asks IDM to queue or start it; IDM remains responsible for the actual download. Archive files saved to IDM staging will be picked up by the existing watcher.</div>
+  <div class="field"><label>Download URL</label><input id="idmUrl" placeholder="https://example.com/archive.part01.rar"></div>
+  <div class="grid2">
+   <div class="field"><label>Filename (optional)</label><input id="idmFilename" placeholder="Auto-detect from URL"></div>
+   <div class="field"><label>Save to</label><select id="idmDestination" style="width:100%;background:#0a1018;border:1px solid var(--line);border-radius:9px;padding:10px;color:var(--text)"><option value="download_root">IDM staging (watched by Hermes)</option><option value="game_root">PS5 Games folder</option><option value="inbox_root">Unknown / Inbox</option></select></div>
+  </div>
+  <div class="actions"><button class="primary" onclick="sendIdm('queue')">Add to IDM queue</button><button onclick="sendIdm('start')">Start in IDM now</button><button onclick="launchCompanion('idm')">Open IDM</button></div>
+  <div id="idmResult" class="banner">Downloads are never marked complete until the existing watcher processes their archives.</div>
+ </div>
+ <div class="card" style="margin-top:14px"><div class="sectionhead"><h2>Download & extraction queue</h2><div class="actions"><button class="primary" onclick="startWatcher()">Start watcher</button><button class="danger" onclick="stopWatcher()">Stop watcher</button><button onclick="scanNow()">Scan now</button></div></div><div class="muted">Completed archive sets are tested with WinRAR before extraction. Source archives are preserved.</div><div id="allJobs" class="empty">Loading…</div></div>
+</section>
+<section class="page" id="page-console">
+ <div class="card">
+  <div class="sectionhead"><h2>PS5 connection</h2><button class="primary" onclick="checkConnections()">Check connections</button></div>
+  <div class="muted">Use the PS5's local IPv4 address. Hermes only checks the services; it does not send payloads or run console actions from this screen.</div>
+  <div class="grid2">
+   <div class="field"><label>PS5 LAN IP</label><input id="ps5Ip" placeholder="192.168.1.40"></div>
+   <div class="field"><label>PS5Upload engine URL (local PC only)</label><input id="engineUrl" value="http://127.0.0.1:19113"></div>
+  </div>
+  <div id="connectionResults" class="banner">Enter your PS5 IP and check connections. Pairing codes are entered only in Orbit's own interface.</div>
+ </div>
+ <div class="grid2" style="margin-top:14px">
+  <div class="card">
+   <div class="sectionhead"><h2>Orbit Store / Orbit Zero</h2><span class="badge">Port 34177</span></div>
+   <p class="muted">Orbit Store runs on the PS5. Open its local browser interface to pair using the six-digit code shown on the console. Orbit Zero is the companion PC application for downloading on the computer and transferring over the LAN.</p>
+   <div class="actions"><button class="primary" onclick="openOrbitUI()">Open / pair Orbit Store</button><button onclick="launchCompanion('orbit_zero')">Launch Orbit Zero</button></div>
+   <div class="muted" style="margin-top:9px">Orbit's UI is opened in the integrated browser. Hermes does not automate or bypass Orbit's pairing code.</div>
+  </div>
+  <div class="card">
+   <div class="sectionhead"><h2>PS5Upload</h2><span class="badge">Engine :19113</span></div>
+   <p class="muted">PS5Upload handles resumable transfers, package installation and console file management. Hermes checks the engine and console status, then opens the official client you already have installed.</p>
+   <div class="actions"><button class="primary" onclick="checkConnections()">Check engine & console</button><button onclick="launchCompanion('ps5upload')">Launch PS5Upload</button></div>
+   <div class="muted" style="margin-top:9px">Keep the engine on this PC and on your trusted network. Its API can modify console files and does not provide its own password protection.</div>
+  </div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>FTP / remote file browser</h2><span class="badge">Passive FTP</span></div>
+  <div class="muted">Connect to a PS5 FTP server you have enabled (PS5Upload documents port 2122 for its optional server). Passwords are used only for the current request and are not saved by Hermes. The remote browser offers copy transfers only; it will not delete or overwrite remote files.</div>
+  <div class="grid2">
+   <div class="field"><label>FTP host (defaults to PS5 IP)</label><input id="ftpHost" placeholder="192.168.1.40"></div>
+   <div class="grid2">
+    <div class="field"><label>Port</label><input id="ftpPort" type="number" min="1" max="65535" value="2122"></div>
+    <div class="field"><label>Username</label><input id="ftpUser" value="anonymous"></div>
+   </div>
+   <div class="field"><label>Password (not saved)</label><input id="ftpPassword" type="password" autocomplete="off"></div>
+   <div class="field"><label>Remote directory</label><input id="ftpRemotePath" value="/"></div>
+   <div class="field"><label>Local file to upload</label><div style="display:flex;gap:8px"><input id="ftpLocalPath" placeholder="Choose a file under one of your Hermes folders"><button onclick="chooseLocalFile()">Browse</button></div></div>
+  </div>
+  <div class="actions"><button class="primary" onclick="ftpList()">Connect / list folder</button><button onclick="ftpUpload()">Upload selected file</button><button onclick="launchCompanion('filezilla')">Open FileZilla</button><button onclick="loadFtpJobs()">Refresh transfers</button></div>
+  <div id="ftpStatus" class="banner">No FTP connection checked yet.</div>
+  <div id="ftpListing" class="tablewrap" style="margin-top:12px"><div class="empty">Connect to a directory to browse remote files.</div></div>
+  <div class="sectionhead" style="margin-top:18px"><h2>FTP transfer jobs</h2></div>
+  <div id="ftpJobs" class="empty">No FTP transfer jobs yet.</div>
+ </div>
 </section>
 <section class="page" id="page-settings">
- <div class="card"><div class="sectionhead"><h2>Paths and behavior</h2><button class="primary" onclick="saveConfig()">Save configuration</button></div><div class="grid2">
-  <div class="field"><label>IDM staging folder</label><input id="cfgDownload"></div><div class="field"><label>WinRAR temporary folder</label><input id="cfgRar"></div>
+ <div class="card"><div class="sectionhead"><h2>Storage paths</h2><button class="primary" onclick="saveConfig()">Save settings</button></div><div class="grid2">
+  <div class="field"><label>IDM staging / watched folder</label><input id="cfgDownload"></div><div class="field"><label>WinRAR temporary folder</label><input id="cfgRar"></div>
   <div class="field"><label>Extracted PS5 games</label><input id="cfgGames"></div><div class="field"><label>Unknown / inbox</label><input id="cfgInbox"></div>
- </div><div class="banner">Safety defaults: preserve original archives, no automatic deletion, extract to separate destination folders.</div></div>
+  <div class="field"><label>FTP downloads to this local folder</label><input id="cfgFtpRoot"></div>
+ </div></div>
+ <div class="card" style="margin-top:14px"><div class="sectionhead"><h2>Companion application paths</h2><button class="primary" onclick="saveConfig()">Save paths</button></div><div class="muted">Browse to the executable for each program. These paths stay local in data/config.json. Hermes will not download executables automatically.</div>
+  <div class="field"><label>IDMan.exe (optional; auto-detected if installed)</label><div style="display:flex;gap:8px"><input id="cfgIdmExe"><button onclick="chooseExecutable('cfgIdmExe')">Browse</button></div></div>
+  <div class="field"><label>Orbit Zero.exe</label><div style="display:flex;gap:8px"><input id="cfgOrbitExe"><button onclick="chooseExecutable('cfgOrbitExe')">Browse</button></div></div>
+  <div class="field"><label>PS5Upload.exe</label><div style="display:flex;gap:8px"><input id="cfgPs5UploadExe"><button onclick="chooseExecutable('cfgPs5UploadExe')">Browse</button></div></div>
+  <div class="field"><label>FileZilla.exe (optional)</label><div style="display:flex;gap:8px"><input id="cfgFileZillaExe"><button onclick="chooseExecutable('cfgFileZillaExe')">Browse</button></div></div>
+  <div class="banner">Safety defaults: preserve original archives, no automatic deletion, no remote delete command, and no overwrite of existing FTP files.</div>
+ </div>
 </section>
 <div class="footer">Hermes Manager · Local-first · No cloud account required · Review before destructive actions</div>
 </main></div>
 <script>
 const $=id=>document.getElementById(id);const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let cfg={},lastJobs=[];
-const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect ProsperoPatches pages.'],storage:['Storage Scanner','Inventory your drive and review cleanup candidates safely.'],downloads:['Download Queue','Watch IDM staging and verify archives before extraction.'],settings:['Settings','Configure folders used by Hermes.']};
+const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['Storage Scanner','Inventory your drive and review cleanup candidates safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],settings:['Settings','Configure folders and companion applications.']};
 function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage')$('scanRoot').value=$('scanRoot').value||'D:\\';}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
 async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opts});const d=await r.json();if(!r.ok)throw Error(d.error||('Request failed '+r.status));return d}

@@ -66,6 +66,7 @@ Hermes is the control panel; it does not attempt to replace specialist tools.
 - Local transfer/install sources must be inside one of Hermes' configured library folders. Configure `FTP downloads to this local folder` under Settings for additional staging space.
 - The PKG installer requires an ordinary `.pkg` file. Split-package workflows should be handled in the PS5Upload client until Hermes adds explicit split-set support. PS5 system packages are not part of this installer workflow.
 - Hermes leaves PS5Upload's destructive-reinstall option disabled and does not request deletion of the local PKG. Nevertheless, package installation can affect existing console content; confirm the title and package type before installing.
+- Classic FTP is unencrypted. Use it only on a trusted LAN; usernames, passwords and file contents are not protected in transit. Prefer PS5Upload for large or sensitive transfers.
 - FTP credentials are used only for the current connection request and are not saved in Hermes configuration. Hermes will not overwrite an existing local or remote file and has no remote-delete action.
 - Large downloads and extractions on external storage should remain sequential by default, particularly when a disk has previously shown I/O retry/reset errors.
 

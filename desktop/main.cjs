@@ -57,15 +57,29 @@ function startBackend() {
 }
 
 async function waitForServer() {
-  const deadline = Date.now() + 30000;
+  // On some Windows installations the first Python import (notably Crawl4AI)
+  // can take longer than 30 seconds. Keep waiting for the real health endpoint
+  // instead of showing a false startup failure while the backend is still booting.
+  const startedAt = Date.now();
+  const deadline = startedAt + 120000;
+  let lastError = "API has not responded yet";
   while (Date.now() < deadline) {
-    if (backendExited) return false;
+    if (backendExited) {
+      backendExitInfo = backendExitInfo || { error: "Backend exited before the API became ready" };
+      return false;
+    }
     try {
-      const response = await fetch("http://127.0.0.1:8765/api/status");
+      const response = await fetch("http://127.0.0.1:8765/api/status", {
+        signal: AbortSignal.timeout(1500)
+      });
       if (response.ok) return true;
-    } catch (_) {}
+      lastError = "Health endpoint returned HTTP " + response.status;
+    } catch (error) {
+      lastError = error && error.message ? error.message : String(error);
+    }
     await new Promise(resolve => setTimeout(resolve, 400));
   }
+  backendExitInfo = { error: "Timed out after " + Math.round((Date.now() - startedAt) / 1000) + " seconds waiting for /api/status; last result: " + lastError };
   return false;
 }
 
@@ -96,8 +110,8 @@ async function createWindow() {
   const ready = await waitForServer();
   if (!ready) {
     const detail = backendExitInfo
-      ? "The Python process exited (" + (backendExitInfo.signal || backendExitInfo.code || backendExitInfo.error || "unknown") + ")."
-      : "The local API did not respond within 30 seconds.";
+      ? (backendExitInfo.error || ("The Python process exited (" + (backendExitInfo.signal || backendExitInfo.code || "unknown") + ")."))
+      : "The local API did not respond within 120 seconds.";
     dialog.showErrorBox("Hermes did not start", detail + " Inspect data/backend.log for the startup traceback.");
     app.quit();
     return;

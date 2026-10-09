@@ -301,6 +301,114 @@ class HermesIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hermes.fetch_latest_payload_release("untrusted-user/untrusted-repo")
 
+    def test_storage_audit_reports_missing_and_ready_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            ready = root / "idm"
+            ready.mkdir()
+            with patch.dict(hermes.CONFIG, {
+                "download_root": str(ready),
+                "rar_temp": str(root / "missing-rar"),
+                "automation_root": str(root / "automation"),
+                "game_root": str(root / "games"),
+                "inbox_root": str(root / "inbox"),
+                "ftp_local_root": str(root / "ftp"),
+            }):
+                response = self.client.get("/api/storage/audit", query_string={"root": str(root)})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            payload = response.get_json()
+            paths = {item["key"]: item for item in payload["paths"]}
+            self.assertEqual(paths["download_root"]["status"], "ready")
+            self.assertEqual(paths["rar_temp"]["status"], "missing")
+            self.assertFalse(paths["rar_temp"]["exists"])
+            self.assertEqual(payload["drive"]["path"], str(root.resolve()))
+
+    def test_storage_create_missing_paths_only_creates_inside_selected_root(self):
+        with tempfile.TemporaryDirectory() as temp, tempfile.TemporaryDirectory() as outside:
+            root = Path(temp)
+            missing_inside = root / "missing" / "subfolder"
+            outside_path = Path(outside) / "should-not-create"
+            with patch.dict(hermes.CONFIG, {
+                "download_root": str(missing_inside),
+                "rar_temp": str(root / "already-there"),
+                "automation_root": str(outside_path),
+                "game_root": str(root),
+                "inbox_root": str(root / "inbox"),
+                "ftp_local_root": str(root / "ftp"),
+            }), patch.object(hermes, "ensure_layout"):
+                (root / "already-there").mkdir()
+                response = self.client.post("/api/storage/paths/create-missing", json={"root": str(root)})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertTrue(missing_inside.is_dir())
+            self.assertFalse(outside_path.exists())
+            skipped = {item["label"]: item for item in response.get_json()["skipped"]}
+            self.assertIn("Outside the selected drive/folder", skipped["Hermes automation and metadata"]["reason"])
+            self.assertIn("entire selected drive", skipped["Extracted PS5 games"]["reason"])
+
+    def test_storage_organization_preview_only_lists_direct_files_and_never_moves(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            doc = root / "notes.pdf"
+            image = root / "photo.jpg"
+            payload = root / "custom.elf"
+            archive = root / "game.part01.rar"
+            nested = root / "nested"
+            nested.mkdir()
+            doc.write_bytes(b"document")
+            image.write_bytes(b"image")
+            payload.write_bytes(b"payload")
+            archive.write_bytes(b"part")
+            (nested / "ignore.mp4").write_bytes(b"nested video")
+            with patch.dict(hermes.CONFIG, {
+                "download_root": str(root / "idm"),
+                "rar_temp": str(root / "rar"),
+                "automation_root": str(root / "automation"),
+                "game_root": str(root / "games"),
+                "inbox_root": str(root / "inbox"),
+                "ftp_local_root": str(root / "ftp"),
+            }):
+                response = self.client.post("/api/storage/organize/preview", json={"root": str(root)})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            items = response.get_json()["items"]
+            self.assertEqual({item["filename"] for item in items}, {"notes.pdf", "photo.jpg", "custom.elf"})
+            self.assertTrue(all(not item["selected_by_default"] for item in items))
+            self.assertTrue(doc.exists() and image.exists() and payload.exists() and archive.exists())
+            self.assertTrue((nested / "ignore.mp4").exists())
+
+    def test_storage_move_selected_moves_only_reviewed_files_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            moved_source = root / "move-me.pdf"
+            collision_source = root / "collision.pdf"
+            moved_source.write_bytes(b"move me")
+            collision_source.write_bytes(b"preserve original")
+            collision_dir = root / "_Organized" / "Documents"
+            collision_dir.mkdir(parents=True)
+            collision_destination = collision_dir / "collision.pdf"
+            collision_destination.write_bytes(b"existing destination")
+            with patch.dict(hermes.CONFIG, {
+                "download_root": str(root / "idm"),
+                "rar_temp": str(root / "rar"),
+                "automation_root": str(root / "automation"),
+                "game_root": str(root / "games"),
+                "inbox_root": str(root / "inbox"),
+                "ftp_local_root": str(root / "ftp"),
+            }), patch.object(hermes, "activity"):
+                response = self.client.post("/api/storage/organize/move-selected", json={
+                    "root": str(root),
+                    "filenames": ["move-me.pdf", "collision.pdf", "unrecognized.bin"],
+                })
+            self.assertEqual(response.status_code, 200, response.get_json())
+            result = response.get_json()
+            self.assertEqual([item["filename"] for item in result["moved"]], ["move-me.pdf"])
+            self.assertFalse(moved_source.exists())
+            self.assertEqual((root / "_Organized" / "Documents" / "move-me.pdf").read_bytes(), b"move me")
+            self.assertTrue(collision_source.exists())
+            self.assertEqual(collision_destination.read_bytes(), b"existing destination")
+            skipped = {item["filename"]: item["reason"] for item in result["skipped"]}
+            self.assertIn("already exists", skipped["collision.pdf"].lower())
+            self.assertIn("No safe organization rule", skipped["unrecognized.bin"])
+
     def test_ftp_path_rejects_traversal(self):
         with self.assertRaises(ValueError):
             hermes.ftp_remote_path("/data/homebrew/../../system")

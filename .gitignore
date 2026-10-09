@@ -4,3 +4,5 @@ __pycache__/
 data/
 .coverage
 .pytest_cache/
+desktop/node_modules/
+desktop/dist/

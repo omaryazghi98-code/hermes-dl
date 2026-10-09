@@ -2211,6 +2211,19 @@ ORGANIZE_RULES = {
 }
 
 
+def storage_activity(message: str) -> None:
+    # Keep drive-management logs under Hermes' private runtime data instead of
+    # invoking activity(), which can create the configured automation folder as a side effect.
+    line = time.strftime("%Y-%m-%d %H:%M:%S") + " | " + message
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with (DATA_DIR / "storage_activity.log").open("a", encoding="utf-8") as handle:
+            handle.write(line + "\\n")
+    except OSError:
+        pass
+    print(line, flush=True)
+
+
 def storage_path_within(path: Path, root: Path) -> bool:
     try:
         path_text = os.path.normcase(os.path.abspath(str(path)))
@@ -2391,7 +2404,7 @@ def api_storage_create_missing_paths():
                 continue
             path.mkdir(parents=True, exist_ok=False)
             created.append({"label": label, "path": str(path)})
-            activity("STORAGE: created configured directory " + str(path))
+            storage_activity("STORAGE: created configured directory " + str(path))
         except OSError as exc:
             skipped.append({"label": label, "path": raw, "reason": str(exc)})
     ensure_layout()
@@ -2488,7 +2501,7 @@ def api_storage_organize_move_selected():
             # existing destination on Windows. We also check first and report collisions.
             source.rename(destination)
             moved.append({"filename": filename, "category": category, "from": str(source), "to": str(destination), "bytes": destination.stat().st_size})
-            activity("STORAGE: organized " + str(source) + " -> " + str(destination))
+            storage_activity("STORAGE: organized " + str(source) + " -> " + str(destination))
         except FileExistsError:
             skipped.append({"filename": filename, "reason": "Destination already exists; it was not overwritten"})
         except OSError as exc:

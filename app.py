@@ -1074,6 +1074,494 @@ def index():
     return render_template("index.html")
 
 
+def find_idm() -> str | None:
+    configured = str(CONFIG.get("idm_exe_path") or "").strip()
+    candidates = [Path(configured)] if configured else []
+    for base in (
+        os.environ.get("ProgramFiles", ""),
+        os.environ.get("ProgramFiles(x86)", ""),
+        os.environ.get("LOCALAPPDATA", ""),
+    ):
+        if base:
+            candidates.append(Path(base) / "Internet Download Manager" / "IDMan.exe")
+            candidates.append(Path(base) / "Programs" / "Internet Download Manager" / "IDMan.exe")
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and candidate.suffix.lower() == ".exe":
+                return str(candidate.resolve())
+        except OSError:
+            continue
+    return shutil.which("IDMan.exe")
+
+
+def private_lan_ip(value: Any, allow_loopback: bool = False) -> str:
+    text = str(value or "").strip()
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError as exc:
+        raise ValueError("Enter the PS5's local IPv4 address, for example 192.168.1.40.") from exc
+    if not addr.is_private or addr.is_multicast or addr.is_unspecified:
+        raise ValueError("For safety, Hermes only connects to private LAN IP addresses.")
+    if addr.is_loopback and not allow_loopback:
+        raise ValueError("Enter the PS5's LAN address, not 127.0.0.1.")
+    if addr.version != 4:
+        raise ValueError("Enter an IPv4 address for this integration.")
+    return str(addr)
+
+
+def validate_engine_url(value: Any) -> str:
+    url = str(value or "").strip().rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "http" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("PS5Upload engine URL must be a plain HTTP URL on your trusted local machine.")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ValueError("Use only the engine origin, for example http://127.0.0.1:19113.")
+    host = parsed.hostname.lower()
+    if host != "localhost":
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError as exc:
+            raise ValueError("For safety, the PS5Upload engine must use localhost or a loopback IP.") from exc
+        if not addr.is_loopback:
+            raise ValueError("For safety, keep the unauthenticated PS5Upload engine on this PC (localhost).")
+    return url
+
+
+def find_companion_path(component: str) -> Path | None:
+    key_for_component = {
+        "orbit_zero": "orbit_zero_exe_path",
+        "ps5upload": "ps5upload_exe_path",
+        "filezilla": "filezilla_exe_path",
+    }
+    if component == "idm":
+        value = find_idm()
+    else:
+        key = key_for_component.get(component)
+        if not key:
+            return None
+        value = str(CONFIG.get(key) or "").strip()
+        if not value and component == "filezilla":
+            for base in (os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", "")):
+                if base:
+                    candidate = Path(base) / "FileZilla FTP Client" / "filezilla.exe"
+                    if candidate.is_file():
+                        value = str(candidate)
+                        break
+    if not value:
+        return None
+    try:
+        path = Path(value).expanduser()
+        return path.resolve() if path.is_file() and path.suffix.lower() == ".exe" else None
+    except OSError:
+        return None
+
+
+def ftp_remote_path(value: Any) -> str:
+    path = str(value or "/").strip()
+    if "\r" in path or "\n" in path or "\x00" in path:
+        raise ValueError("Remote path contains invalid characters.")
+    parts = path.replace("\\", "/").split("/")
+    if any(part == ".." for part in parts):
+        raise ValueError("Parent-directory traversal is not allowed in FTP paths.")
+    normalized = posixpath.normpath(path or "/")
+    return normalized if normalized.startswith("/") else "/" + normalized
+
+
+def open_ftp(data: dict[str, Any]) -> tuple[ftplib.FTP, dict[str, Any]]:
+    host = private_lan_ip(data.get("host") or CONFIG.get("ftp_host") or CONFIG.get("ps5_ip"))
+    try:
+        port = int(data.get("port") or CONFIG.get("ftp_port") or 2122)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("FTP port must be a number between 1 and 65535.") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("FTP port must be between 1 and 65535.")
+    username = str(data.get("username") or CONFIG.get("ftp_user") or "anonymous").strip() or "anonymous"
+    password = str(data.get("password") or "")
+    ftp = ftplib.FTP()
+    try:
+        ftp.connect(host, port, timeout=8)
+        ftp.login(username, password)
+        ftp.set_pasv(True)
+    except Exception:
+        try:
+            ftp.close()
+        except Exception:
+            pass
+        raise
+    return ftp, {"host": host, "port": port, "username": username, "password": password}
+
+
+FTP_JOB_LOCK = threading.Lock()
+FTP_JOBS: dict[str, dict[str, Any]] = {}
+
+
+def update_ftp_job(job_id: str, **fields: Any) -> None:
+    with FTP_JOB_LOCK:
+        if job_id in FTP_JOBS:
+            FTP_JOBS[job_id].update(fields)
+            FTP_JOBS[job_id]["updated_at"] = time.time()
+
+
+def allowed_local_transfer_file(value: Any) -> Path:
+    raw = Path(str(value or "").strip()).expanduser()
+    if not str(value or "").strip() or raw.is_symlink() or not raw.is_file():
+        raise ValueError("Choose an existing local file. Symbolic links are not accepted.")
+    resolved = raw.resolve()
+    allowed_roots = [
+        Path(CONFIG["download_root"]),
+        Path(CONFIG["game_root"]),
+        Path(CONFIG["inbox_root"]),
+        Path(CONFIG.get("ftp_local_root", CONFIG["inbox_root"])),
+    ]
+    for root in allowed_roots:
+        try:
+            root_resolved = root.expanduser().resolve()
+            if resolved.is_relative_to(root_resolved):
+                return resolved
+        except (OSError, ValueError):
+            continue
+    raise ValueError("For safety, choose a file inside IDM staging, PS5 Games, the Inbox, or the configured FTP local folder.")
+
+
+def ftp_transfer_worker(job_id: str, mode: str, data: dict[str, Any], local_file: Path | None = None) -> None:
+    ftp: ftplib.FTP | None = None
+    temp_path: Path | None = None
+    try:
+        ftp, credentials = open_ftp(data)
+        if mode == "upload":
+            if local_file is None:
+                raise ValueError("Local upload file is missing.")
+            remote_dir = ftp_remote_path(data.get("remote_dir") or "/")
+            remote_name = safe_name(str(data.get("remote_name") or local_file.name), max_len=180)
+            if not remote_name or remote_name in {".", ".."}:
+                raise ValueError("Remote filename is invalid.")
+            ftp.cwd(remote_dir)
+            try:
+                existing = ftp.nlst()
+            except ftplib.all_errors as exc:
+                raise RuntimeError("Could not check remote filenames, so Hermes refused to risk overwriting a file: " + str(exc)) from exc
+            existing_names = {posixpath.basename(item.rstrip("/")) for item in existing}
+            if remote_name in existing_names:
+                raise FileExistsError("A remote file with that name already exists. Rename it or choose another destination; Hermes never overwrites it.")
+            total = local_file.stat().st_size
+            update_ftp_job(job_id, status="transferring", total_bytes=total, local_path=str(local_file), remote_path=posixpath.join(remote_dir, remote_name))
+            transferred = 0
+            last_update = 0
+            def upload_progress(block: bytes) -> None:
+                nonlocal transferred, last_update
+                transferred += len(block)
+                if transferred - last_update >= 4 * 1024 * 1024 or transferred >= total:
+                    update_ftp_job(job_id, bytes_done=transferred)
+                    last_update = transferred
+            with local_file.open("rb") as handle:
+                ftp.storbinary("STOR " + remote_name, handle, blocksize=1024 * 1024, callback=upload_progress)
+            update_ftp_job(job_id, status="completed", bytes_done=total, message="Upload finished. Remote listing was not modified beyond the new file.")
+        elif mode == "download":
+            remote_path = ftp_remote_path(data.get("remote_path"))
+            remote_name = safe_name(posixpath.basename(remote_path), max_len=180)
+            if not remote_name or remote_name in {".", ".."}:
+                raise ValueError("Choose a remote file, not a directory.")
+            target_dir = Path(CONFIG.get("ftp_local_root", CONFIG["inbox_root"])).expanduser()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / remote_name
+            if target.exists():
+                raise FileExistsError("A local file with that name already exists. Hermes never overwrites it.")
+            try:
+                total_raw = ftp.size(remote_path)
+                total = int(total_raw) if total_raw is not None else 0
+            except ftplib.all_errors:
+                total = 0
+            if total and shutil.disk_usage(target_dir).free < total:
+                raise OSError("There is not enough free space in the configured FTP local folder.")
+            temp_path = target_dir / (".hermes-partial-" + uuid.uuid4().hex + ".tmp")
+            transferred = 0
+            last_update = 0
+            update_ftp_job(job_id, status="transferring", total_bytes=total, remote_path=remote_path, local_path=str(target))
+            def download_progress(block: bytes) -> None:
+                nonlocal transferred, last_update
+                with temp_path.open("ab") as handle:
+                    handle.write(block)
+                transferred += len(block)
+                if transferred - last_update >= 4 * 1024 * 1024 or (total and transferred >= total):
+                    update_ftp_job(job_id, bytes_done=transferred, total_bytes=total)
+                    last_update = transferred
+            temp_path.touch(exist_ok=False)
+            ftp.retrbinary("RETR " + remote_path, download_progress, blocksize=1024 * 1024)
+            if target.exists():
+                raise FileExistsError("The local destination appeared during transfer; original downloaded bytes were kept in a temporary file.")
+            temp_path.replace(target)
+            temp_path = None
+            update_ftp_job(job_id, status="completed", bytes_done=transferred, total_bytes=total or transferred, local_path=str(target), message="Download finished and moved into place.")
+        else:
+            raise ValueError("Unknown FTP transfer type.")
+        activity("FTP " + mode + " completed (job " + job_id + ").")
+    except Exception as exc:
+        update_ftp_job(job_id, status="failed", error=str(exc))
+        activity("FTP " + mode + " failed (job " + job_id + "): " + str(exc)[:200])
+    finally:
+        if temp_path:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if ftp:
+            try:
+                ftp.quit()
+            except Exception:
+                try:
+                    ftp.close()
+                except Exception:
+                    pass
+
+
+def queue_ftp_transfer(mode: str, data: dict[str, Any], local_file: Path | None = None) -> str:
+    job_id = uuid.uuid4().hex[:12]
+    entry = {
+        "id": job_id, "mode": mode, "status": "queued",
+        "bytes_done": 0, "total_bytes": 0, "created_at": time.time(),
+        "updated_at": time.time(), "local_path": str(local_file) if local_file else None,
+        "remote_path": str(data.get("remote_path") or data.get("remote_dir") or ""),
+        "error": None, "message": "Waiting for FTP worker.",
+    }
+    with FTP_JOB_LOCK:
+        FTP_JOBS[job_id] = entry
+        if len(FTP_JOBS) > 100:
+            oldest = sorted(FTP_JOBS, key=lambda key: FTP_JOBS[key].get("created_at", 0))[:20]
+            for key in oldest:
+                FTP_JOBS.pop(key, None)
+    threading.Thread(target=ftp_transfer_worker, args=(job_id, mode, dict(data), local_file), name="HermesFTP-" + job_id, daemon=True).start()
+    return job_id
+
+
+@app.get("/api/integrations/status")
+def api_integrations_status():
+    return jsonify({
+        "idm": {"available": bool(find_idm()), "path": find_idm()},
+        "orbit_zero": {"configured": bool(find_companion_path("orbit_zero")), "path": str(find_companion_path("orbit_zero") or "")},
+        "ps5upload": {"configured": bool(find_companion_path("ps5upload")), "path": str(find_companion_path("ps5upload") or "")},
+        "filezilla": {"configured": bool(find_companion_path("filezilla")), "path": str(find_companion_path("filezilla") or "")},
+        "ps5_ip": CONFIG.get("ps5_ip", ""),
+        "ps5upload_engine_url": CONFIG.get("ps5upload_engine_url", "http://127.0.0.1:19113"),
+        "ftp_host": CONFIG.get("ftp_host", ""),
+        "ftp_port": CONFIG.get("ftp_port", 2122),
+        "ftp_user": CONFIG.get("ftp_user", "anonymous"),
+        "ftp_local_root": CONFIG.get("ftp_local_root", CONFIG["inbox_root"]),
+    })
+
+
+@app.post("/api/integrations/check")
+def api_integrations_check():
+    data = request.get_json(force=True) or {}
+    try:
+        update_config({
+            "ps5_ip": data.get("ps5_ip", CONFIG.get("ps5_ip", "")),
+            "ps5upload_engine_url": data.get("ps5upload_engine_url", CONFIG.get("ps5upload_engine_url", "http://127.0.0.1:19113")),
+        })
+        ps5_ip = private_lan_ip(CONFIG.get("ps5_ip"), allow_loopback=False) if CONFIG.get("ps5_ip") else ""
+        engine_url = validate_engine_url(CONFIG.get("ps5upload_engine_url"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    idm_path = find_idm()
+    result: dict[str, Any] = {
+        "idm": {"ok": bool(idm_path), "path": idm_path, "message": "IDM found." if idm_path else "IDM was not detected. Set its executable path in Settings."},
+        "orbit": {"ok": False, "url": "http://" + ps5_ip + ":34177/" if ps5_ip else "", "message": "Enter your PS5's LAN IP." if not ps5_ip else "Not checked."},
+        "ps5upload": {"engine_ok": False, "console_ok": False, "engine_url": engine_url, "message": "Engine not checked."},
+    }
+
+    if ps5_ip:
+        orbit_url = "http://" + ps5_ip + ":34177/"
+        try:
+            response = requests.get(orbit_url, timeout=3, stream=True, allow_redirects=False)
+            result["orbit"] = {
+                "ok": response.status_code in (200, 301, 302, 303, 307, 308),
+                "url": orbit_url,
+                "http_status": response.status_code,
+                "message": "Orbit Store web UI responded." if response.status_code in (200, 301, 302, 303, 307, 308) else "Orbit Store did not return a normal web response.",
+            }
+            response.close()
+        except requests.RequestException as exc:
+            result["orbit"] = {"ok": False, "url": orbit_url, "message": "No response from Orbit Store at port 34177: " + str(exc)}
+
+    try:
+        engine_response = requests.get(engine_url + "/api/jobs", timeout=3)
+        result["ps5upload"]["engine_ok"] = engine_response.ok
+        if engine_response.ok:
+            try:
+                jobs_data = engine_response.json()
+                result["ps5upload"]["job_count"] = len(jobs_data) if isinstance(jobs_data, list) else None
+            except ValueError:
+                pass
+            if ps5_ip:
+                console_response = requests.get(engine_url + "/api/ps5/status", params={"addr": ps5_ip}, timeout=6)
+                result["ps5upload"]["console_http_status"] = console_response.status_code
+                try:
+                    body = console_response.json()
+                except ValueError:
+                    body = {}
+                result["ps5upload"]["console_ok"] = console_response.ok and body.get("ok", True) is not False
+                result["ps5upload"]["console_response"] = body
+                result["ps5upload"]["message"] = "Engine is online; console status request completed." if result["ps5upload"]["console_ok"] else "Engine is online, but the console did not return a successful status. Check jailbreak, helper and pairing."
+            else:
+                result["ps5upload"]["message"] = "Engine is online. Enter the PS5 LAN IP to check the console."
+        else:
+            result["ps5upload"]["message"] = "Engine returned HTTP " + str(engine_response.status_code) + "."
+    except requests.RequestException as exc:
+        result["ps5upload"]["message"] = "Engine not reachable at " + engine_url + ": " + str(exc)
+
+    activity("Integration check completed.")
+    return jsonify(result)
+
+
+@app.post("/api/integrations/launch")
+def api_integrations_launch():
+    data = request.get_json(force=True) or {}
+    component = str(data.get("component") or "")
+    path = find_companion_path(component)
+    if path is None:
+        return jsonify({"error": "Executable not found. Set the path in Settings first."}), 404
+    try:
+        subprocess.Popen([str(path)], cwd=str(path.parent), close_fds=True)
+    except Exception as exc:
+        return jsonify({"error": "Could not launch " + component + ": " + str(exc)}), 500
+    activity("Launched companion application: " + component)
+    return jsonify({"ok": True, "component": component, "path": str(path)})
+
+
+@app.post("/api/downloads/idm")
+def api_download_with_idm():
+    data = request.get_json(force=True) or {}
+    raw_url = str(data.get("url") or "").strip()
+    parsed = urllib.parse.urlparse(raw_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return jsonify({"error": "Enter a direct HTTP or HTTPS download URL without embedded credentials."}), 400
+    destination_key = str(data.get("destination") or "download_root")
+    allowed = {"download_root": CONFIG["download_root"], "game_root": CONFIG["game_root"], "inbox_root": CONFIG["inbox_root"]}
+    destination = Path(allowed.get(destination_key, ""))
+    if not str(destination):
+        return jsonify({"error": "Choose a valid destination folder."}), 400
+    filename = safe_name(str(data.get("filename") or "").strip() or posixpath.basename(parsed.path) or "download.bin")
+    if filename in {"", ".", ".."}:
+        return jsonify({"error": "Filename is invalid."}), 400
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        if (destination / filename).exists():
+            return jsonify({"error": "That filename already exists in the destination. Rename it or choose another folder; Hermes will not overwrite it."}), 409
+    except OSError as exc:
+        return jsonify({"error": "Cannot access the destination folder: " + str(exc)}), 400
+    idm_path = find_idm()
+    if not idm_path:
+        return jsonify({"error": "IDM was not found. Set IDMan.exe in Settings."}), 404
+    action = str(data.get("action") or "queue").lower()
+    if action not in {"queue", "start"}:
+        return jsonify({"error": "Action must be queue or start."}), 400
+    args = ["/d", raw_url, "/p", str(destination), "/f", filename]
+    if action == "queue":
+        args.append("/a")
+    else:
+        args.insert(0, "/n")
+    try:
+        subprocess.Popen([idm_path, *args], cwd=str(Path(idm_path).parent), close_fds=True)
+    except Exception as exc:
+        return jsonify({"error": "Could not start IDM: " + str(exc)}), 500
+    activity("Sent a download to IDM (" + action + "): " + filename)
+    return jsonify({"ok": True, "action": action, "filename": filename, "destination": str(destination), "idm_path": idm_path, "message": "Request sent to IDM. Verify the item in IDM's own queue."}), 202
+
+
+@app.post("/api/ftp/list")
+def api_ftp_list():
+    data = request.get_json(force=True) or {}
+    ftp = None
+    try:
+        remote_path = ftp_remote_path(data.get("path") or "/")
+        ftp, _ = open_ftp(data)
+        ftp.cwd(remote_path)
+        current = ftp.pwd()
+        items: list[dict[str, Any]] = []
+        try:
+            for name, facts in ftp.mlsd():
+                if name in {".", ".."}:
+                    continue
+                kind = facts.get("type", "unknown").lower()
+                if kind in {"cdir", "pdir"}:
+                    continue
+                try:
+                    size = int(facts.get("size", "0"))
+                except (ValueError, TypeError):
+                    size = None
+                items.append({"name": name, "path": posixpath.join(current, name), "is_dir": kind == "dir", "size": size})
+        except ftplib.all_errors:
+            ftp.cwd(current)
+            names = ftp.nlst()
+            for raw_name in names:
+                name = posixpath.basename(raw_name.rstrip("/"))
+                if not name or name in {".", ".."}:
+                    continue
+                item_path = raw_name if raw_name.startswith("/") else posixpath.join(current, raw_name)
+                is_dir = False
+                try:
+                    ftp.cwd(item_path)
+                    is_dir = True
+                    ftp.cwd(current)
+                except ftplib.all_errors:
+                    try:
+                        ftp.cwd(current)
+                    except ftplib.all_errors:
+                        pass
+                    try:
+                        size = ftp.size(item_path)
+                    except ftplib.all_errors:
+                        size = None
+                else:
+                    size = None
+                items.append({"name": name, "path": item_path, "is_dir": is_dir, "size": size})
+        items.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
+        return jsonify({"ok": True, "host": CONFIG.get("ftp_host") or data.get("host") or CONFIG.get("ps5_ip"), "path": current, "items": items})
+    except (ValueError, OSError, ftplib.all_errors) as exc:
+        return jsonify({"error": "FTP browse failed: " + str(exc)}), 502
+    finally:
+        if ftp:
+            try:
+                ftp.quit()
+            except Exception:
+                try:
+                    ftp.close()
+                except Exception:
+                    pass
+
+
+@app.post("/api/ftp/upload")
+def api_ftp_upload():
+    data = request.get_json(force=True) or {}
+    try:
+        local_file = allowed_local_transfer_file(data.get("local_path"))
+        remote_dir = ftp_remote_path(data.get("remote_dir") or "/")
+        data["remote_dir"] = remote_dir
+        job_id = queue_ftp_transfer("upload", data, local_file)
+        return jsonify({"ok": True, "job_id": job_id, "message": "FTP upload queued."}), 202
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/ftp/download")
+def api_ftp_download():
+    data = request.get_json(force=True) or {}
+    try:
+        data["remote_path"] = ftp_remote_path(data.get("remote_path"))
+        job_id = queue_ftp_transfer("download", data)
+        return jsonify({"ok": True, "job_id": job_id, "destination": CONFIG.get("ftp_local_root"), "message": "FTP download queued."}), 202
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/api/ftp/jobs")
+def api_ftp_jobs():
+    with FTP_JOB_LOCK:
+        jobs = [dict(value) for value in FTP_JOBS.values()]
+    jobs.sort(key=lambda item: item.get("created_at", 0), reverse=True)
+    return jsonify(jobs[:20])
+
+
 @app.get("/manager")
 def manager():
     return render_template("manager.html")

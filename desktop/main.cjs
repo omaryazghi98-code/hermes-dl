@@ -16,13 +16,21 @@ function startBackend() {
     app.quit();
     return;
   }
+  const dataDir = path.join(root, "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+  const logPath = path.join(dataDir, "backend.log");
+  const logFd = fs.openSync(logPath, "a");
+  fs.writeSync(logFd, "\\n\\n=== Hermes Manager start " + new Date().toISOString() + " ===\\n");
   backend = spawn(python, [appScript], {
     cwd: root,
     env: { ...process.env, HERMES_DESKTOP: "1" },
     windowsHide: true,
-    stdio: "ignore"
+    stdio: ["ignore", logFd, logFd]
   });
   backend.on("error", error => dialog.showErrorBox("Hermes backend failed", error.message));
+  backend.on("exit", () => {
+    try { fs.closeSync(logFd); } catch (_) {}
+  });
 }
 
 async function waitForServer() {
@@ -42,7 +50,7 @@ async function createWindow() {
   if (!backend) return;
   const ready = await waitForServer();
   if (!ready) {
-    dialog.showErrorBox("Hermes did not start", "The local API did not respond on port 8765. Check whether another Hermes instance is running or inspect data/activity.log.");
+    dialog.showErrorBox("Hermes did not start", "The local API did not respond on port 8765. Check whether another Hermes instance is running or inspect data/backend.log.");
     app.quit();
     return;
   }

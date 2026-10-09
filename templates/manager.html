@@ -97,6 +97,18 @@
    <p class="muted">PS5Upload handles resumable transfers, package installation and console file management. Hermes checks the engine and console status, then opens the official client you already have installed.</p>
    <div class="actions"><button class="primary" onclick="checkConnections()">Check engine & console</button><button onclick="launchCompanion('ps5upload')">Launch PS5Upload</button></div>
    <div class="muted" style="margin-top:9px">Keep the engine on this PC and on your trusted network. Its API can modify console files and does not provide its own password protection.</div>
+   <hr style="border:0;border-top:1px solid var(--line);margin:15px 0">
+   <h3>Transfer a file to the PS5</h3>
+   <div class="field"><label>Local file (must be inside one of your Hermes folders)</label><div style="display:flex;gap:8px"><input id="transferLocalPath" placeholder="Select a file to send"><button onclick="chooseTransferFile()">Browse</button></div></div>
+   <div class="field"><label>Destination path on PS5</label><input id="transferRemotePath" value="/data/homebrew/" placeholder="/data/homebrew/"></div>
+   <div class="actions"><button class="primary" onclick="sendPs5Transfer()">Transfer file</button></div>
+   <div id="transferStatus" class="banner">No transfer started.</div>
+   <hr style="border:0;border-top:1px solid var(--line);margin:15px 0">
+   <h3>Install a local PKG</h3>
+   <div class="field"><label>PKG file</label><div style="display:flex;gap:8px"><input id="pkgLocalPath" placeholder="Select a single .pkg file"><button onclick="choosePkgFile()">Browse</button></div></div>
+   <div class="actions"><button class="primary" onclick="installPkg()">Start installation</button><button onclick="refreshPs5Jobs()">Refresh job status</button></div>
+   <div class="muted" style="margin-top:8px">Installation can replace existing game content. Hermes leaves PS5Upload's destructive-reinstall option disabled; confirm title/patch/DLC details and check the console before proceeding. System packages are not supported by this workflow.</div>
+   <div id="installStatus" class="banner">No installation started.</div>
   </div>
  </div>
  <div class="card" style="margin-top:14px">

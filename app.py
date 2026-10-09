@@ -1509,6 +1509,7 @@ def api_ps5upload_transfer():
         ps5_ip = private_lan_ip(data.get("ps5_ip") or CONFIG.get("ps5_ip"))
         local_file = allowed_local_transfer_file(data.get("local_path"))
         remote_path = remote_ps5_path(data.get("remote_path"))
+        update_config({"ps5_ip": ps5_ip, "ps5upload_engine_url": engine_url})
         if local_file.stat().st_size <= 0:
             return jsonify({"error": "The selected local file is empty."}), 400
         response = ps5upload_request(
@@ -1542,6 +1543,7 @@ def api_ps5upload_pkg_install():
         engine_url = ps5upload_origin(data)
         ps5_ip = private_lan_ip(data.get("ps5_ip") or CONFIG.get("ps5_ip"))
         local_file = allowed_local_transfer_file(data.get("local_path"))
+        update_config({"ps5_ip": ps5_ip, "ps5upload_engine_url": engine_url})
         if local_file.suffix.lower() != ".pkg":
             return jsonify({"error": "Choose a single .pkg file. Split package sets need to be selected through PS5Upload's own package workflow."}), 400
         if local_file.stat().st_size <= 0:

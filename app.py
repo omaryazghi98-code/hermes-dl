@@ -1469,6 +1469,140 @@ def api_download_with_idm():
     return jsonify({"ok": True, "action": action, "filename": filename, "destination": str(destination), "idm_path": idm_path, "message": "Request sent to IDM. Verify the item in IDM's own queue."}), 202
 
 
+def ps5upload_origin(data: dict[str, Any] | None = None) -> str:
+    data = data or {}
+    raw = data.get("engine_url") or CONFIG.get("ps5upload_engine_url", "http://127.0.0.1:19113")
+    return validate_engine_url(raw)
+
+
+def remote_ps5_path(value: Any) -> str:
+    path = str(value or "").strip().replace("\\", "/")
+    if not path.startswith("/") or "\x00" in path or "\r" in path or "\n" in path:
+        raise ValueError("Enter an absolute PS5 destination path beginning with /.")
+    parts = path.split("/")
+    if any(part == ".." for part in parts):
+        raise ValueError("Parent-directory traversal is not allowed in PS5 paths.")
+    if len(path) > 700:
+        raise ValueError("Remote path is too long.")
+    return posixpath.normpath(path)
+
+
+def ps5upload_request(method: str, route: str, *, engine_url: str, params: dict[str, Any] | None = None, body: dict[str, Any] | None = None, timeout: int = 12) -> requests.Response:
+    if not route.startswith("/api/") and not route.startswith("/pkg-host/"):
+        raise ValueError("Invalid PS5Upload engine API route.")
+    response = requests.request(
+        method,
+        engine_url + route,
+        params=params,
+        json=body,
+        timeout=timeout,
+        headers={"Accept": "application/json"},
+    )
+    return response
+
+
+@app.post("/api/ps5upload/transfer")
+def api_ps5upload_transfer():
+    data = request.get_json(force=True) or {}
+    try:
+        engine_url = ps5upload_origin(data)
+        ps5_ip = private_lan_ip(data.get("ps5_ip") or CONFIG.get("ps5_ip"))
+        local_file = allowed_local_transfer_file(data.get("local_path"))
+        remote_path = remote_ps5_path(data.get("remote_path"))
+        if local_file.stat().st_size <= 0:
+            return jsonify({"error": "The selected local file is empty."}), 400
+        response = ps5upload_request(
+            "POST",
+            "/api/transfer/file",
+            engine_url=engine_url,
+            body={"addr": ps5_ip, "src": str(local_file), "dest": remote_path},
+            timeout=20,
+        )
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"error": response.text[:500]}
+        if not response.ok:
+            return jsonify({"error": result.get("error") or result.get("detail") or "PS5Upload rejected the transfer.", "engine_response": result}), response.status_code
+        job_id = result.get("job_id") or result.get("job") or result.get("id")
+        if not job_id:
+            return jsonify({"error": "PS5Upload did not return a transfer job ID.", "engine_response": result}), 502
+        activity("PS5Upload transfer queued: " + local_file.name + " → " + remote_path)
+        return jsonify({"ok": True, "job_id": str(job_id), "kind": "transfer", "local_path": str(local_file), "remote_path": remote_path, "engine_url": engine_url}), 202
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.RequestException as exc:
+        return jsonify({"error": "PS5Upload engine request failed: " + str(exc)}), 502
+
+
+@app.post("/api/ps5upload/pkg/install")
+def api_ps5upload_pkg_install():
+    data = request.get_json(force=True) or {}
+    try:
+        engine_url = ps5upload_origin(data)
+        ps5_ip = private_lan_ip(data.get("ps5_ip") or CONFIG.get("ps5_ip"))
+        local_file = allowed_local_transfer_file(data.get("local_path"))
+        if local_file.suffix.lower() != ".pkg":
+            return jsonify({"error": "Choose a single .pkg file. Split package sets need to be selected through PS5Upload's own package workflow."}), 400
+        if local_file.stat().st_size <= 0:
+            return jsonify({"error": "The selected PKG file is empty."}), 400
+        payload = {
+            "ps5_addr": ps5_ip,
+            "source": {"host_file": str(local_file)},
+            "options": {
+                "delete_source_copy_after": False,
+                "allow_destructive_reinstall": False,
+                "force_stream": False,
+                "console_path_fallback": False,
+                "proxy_link": False,
+                "insecure_tls": False,
+            },
+        }
+        response = ps5upload_request(
+            "POST",
+            "/api/pkg/install",
+            engine_url=engine_url,
+            body=payload,
+            timeout=20,
+        )
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"error": response.text[:500]}
+        if not response.ok or result.get("ok") is False or not result.get("job"):
+            return jsonify({"error": result.get("error") or "PS5Upload did not accept the package installation.", "engine_response": result}), response.status_code if not response.ok else 502
+        activity("PS5Upload install queued: " + local_file.name + " on " + ps5_ip)
+        return jsonify({"ok": True, "job_id": str(result["job"]), "kind": "install", "local_path": str(local_file), "engine_url": engine_url}), 202
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.RequestException as exc:
+        return jsonify({"error": "PS5Upload engine request failed: " + str(exc)}), 502
+
+
+@app.get("/api/ps5upload/jobs/<path:job_id>")
+def api_ps5upload_job(job_id: str):
+    kind = str(request.args.get("kind") or "transfer").lower()
+    try:
+        engine_url = ps5upload_origin()
+        if not job_id or len(job_id) > 120 or any(ch in job_id for ch in "\\/?#"):
+            return jsonify({"error": "Invalid job ID."}), 400
+        if kind == "install":
+            response = ps5upload_request("GET", "/api/pkg/install/status", engine_url=engine_url, params={"job": job_id}, timeout=8)
+        elif kind == "transfer":
+            response = ps5upload_request("GET", "/api/jobs/" + urllib.parse.quote(job_id, safe=""), engine_url=engine_url, timeout=8)
+        else:
+            return jsonify({"error": "Job kind must be transfer or install."}), 400
+        try:
+            result = response.json()
+        except ValueError:
+            result = {"error": response.text[:500]}
+        return jsonify({"ok": response.ok, "kind": kind, "job": result}), response.status_code
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.RequestException as exc:
+        return jsonify({"error": "PS5Upload job status request failed: " + str(exc)}), 502
+
+
 @app.post("/api/ftp/list")
 def api_ftp_list():
     data = request.get_json(force=True) or {}

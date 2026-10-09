@@ -100,7 +100,7 @@
    <hr style="border:0;border-top:1px solid var(--line);margin:15px 0">
    <h3>Transfer a file to the PS5</h3>
    <div class="field"><label>Local file (must be inside one of your Hermes folders)</label><div style="display:flex;gap:8px"><input id="transferLocalPath" placeholder="Select a file to send"><button onclick="chooseTransferFile()">Browse</button></div></div>
-   <div class="field"><label>Destination path on PS5</label><input id="transferRemotePath" value="/data/homebrew/" placeholder="/data/homebrew/"></div>
+   <div class="field"><label>Destination folder on PS5 (Hermes preserves the original filename)</label><input id="transferRemotePath" value="/data/homebrew" placeholder="/data/homebrew"></div>
    <div class="actions"><button class="primary" onclick="sendPs5Transfer()">Transfer file</button></div>
    <div id="transferStatus" class="banner">No transfer started.</div>
    <hr style="border:0;border-top:1px solid var(--line);margin:15px 0">

@@ -1980,12 +1980,16 @@ def api_payloads_download_latest():
         )
         api_response.raise_for_status()
         latest = api_response.json()
+        if str(latest.get("tag_name") or "") != str(release.get("tag") or ""):
+            return jsonify({"error": "The upstream latest release changed while you were downloading. Refresh the release list and try again."}), 409
         remote_asset = next(
             (asset for asset in latest.get("assets", []) if asset.get("name") == asset_name),
             None,
         )
         if not remote_asset or Path(str(remote_asset.get("name") or "")).suffix.lower() not in PAYLOAD_EXTENSIONS:
             return jsonify({"error": "Could not re-verify the asset against the official release API."}), 409
+        if int(remote_asset.get("size") or -1) != int(asset_meta["size"]):
+            return jsonify({"error": "The upstream asset metadata changed. Refresh the release list and try again."}), 409
         download_url = str(remote_asset.get("browser_download_url") or "")
         parsed_url = urllib.parse.urlparse(download_url)
         if parsed_url.scheme != "https" or parsed_url.hostname != "github.com" or not parsed_url.path.startswith(f"/{repository}/releases/download/"):

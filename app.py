@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import html
+import ftplib
+import ipaddress
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
 import threading
 import time
 import urllib.parse
+import uuid
 import webbrowser
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -39,6 +43,16 @@ DEFAULT_CONFIG = {
     "automation_root": r"D:\_Automation\IDM-AutoExtract",
     "game_root": r"D:\PS5\Games\Incoming",
     "inbox_root": r"D:\_INBOX",
+    "ftp_local_root": r"D:\PS5\Packages\Incoming",
+    "idm_exe_path": "",
+    "orbit_zero_exe_path": "",
+    "ps5upload_exe_path": "",
+    "filezilla_exe_path": "",
+    "ps5_ip": "",
+    "ps5upload_engine_url": "http://127.0.0.1:19113",
+    "ftp_host": "",
+    "ftp_port": 2122,
+    "ftp_user": "anonymous",
     "watch_interval": 15,
     "stable_seconds": 30,
 }
@@ -100,6 +114,7 @@ def ensure_layout() -> None:
         CONFIG["automation_root"],
         CONFIG["game_root"],
         CONFIG["inbox_root"],
+        CONFIG.get("ftp_local_root", CONFIG["inbox_root"]),
         str(Path(CONFIG["automation_root"]) / "covers"),
         str(Path(CONFIG["automation_root"]) / "logs"),
     ]
@@ -1032,9 +1047,15 @@ def update_config(new_config: dict[str, Any]) -> dict[str, Any]:
     for key in DEFAULT_CONFIG:
         if key not in new_config:
             continue
-        if key in {"watch_interval", "stable_seconds"}:
+        if key in {"watch_interval", "stable_seconds", "ftp_port"}:
             try:
-                merged[key] = max(5, int(new_config[key]))
+                number = int(new_config[key])
+                if key == "ftp_port":
+                    if not 1 <= number <= 65535:
+                        continue
+                    merged[key] = number
+                else:
+                    merged[key] = max(5, number)
             except (ValueError, TypeError):
                 continue
         else:

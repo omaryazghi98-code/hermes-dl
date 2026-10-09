@@ -7,8 +7,8 @@ Hermes Manager is a local-first Windows desktop organizer for downloads, PS5 arc
 1. Install **Python 3.11+** and **Node.js LTS** on Windows.
 2. Make sure WinRAR is installed if you want archive testing and extraction.
 3. Run `launch-desktop.bat`.
-4. On first run, the launcher creates the Python environment, installs Python dependencies, and installs Electron. Subsequent launches reuse the environment.
-5. Hermes opens as a desktop window. The browser panel uses a persistent Electron session.
+4. On first run, the launcher creates the Python environment, installs Python dependencies, and installs Electron plus the ad-blocking libraries. If the desktop dependencies are missing after an update, the launcher installs them automatically.
+5. Hermes opens as a desktop window. The browser panel uses a persistent Electron session and cached ad filters. The very first filter download requires an internet connection.
 
 The existing browser-based version is still available with `start.bat` at `http://127.0.0.1:8765`.
 
@@ -17,6 +17,7 @@ The existing browser-based version is still available with `start.bat` at `http:
 - **Download queue:** watches the configured IDM staging folder, groups multipart RAR files, waits for files to stop changing, tests archives with WinRAR, and extracts verified sets.
 - **PPSA identification:** detects title IDs such as `PPSA22327` and resolves game title and cover metadata using the canonical ProsperoPatches page.
 - **Visible browser fallback:** the Browser tab is a real embedded Chromium browser in the Electron desktop app. Navigate to a ProsperoPatches title page, then use **Use current browser page metadata** on the PS5 Library page if automated lookup does not work.
+- **Built-in ad blocker:** the embedded browser uses EasyList-compatible ad and tracking filters. Use the Browser tab's **Ads & trackers** toggle to turn filtering on or off. Filter data is cached locally; if filter downloads fail, Hermes falls back to a smaller domain blocklist.
 - **PS5 library view:** shows recognized jobs, title IDs, artwork, and destinations.
 - **Storage scanner:** read-only inventory of a selected folder or drive, including file-type counts, largest files, and possible duplicate candidates based on matching filename and size.
 - **Folder shortcuts and settings:** open configured folders and update the staging, temporary, game, and inbox paths.

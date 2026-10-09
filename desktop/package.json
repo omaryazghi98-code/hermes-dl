@@ -1,0 +1,13 @@
+{
+  "name": "hermes-manager",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Hermes Manager desktop shell for local PS5 library and storage organization",
+  "main": "main.cjs",
+  "scripts": {
+    "desktop": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^38.2.0"
+  }
+}

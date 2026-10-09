@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "electron": "^38.2.0"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.18.2",
+    "cross-fetch": "^4.1.0"
   }
 }

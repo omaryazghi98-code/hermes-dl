@@ -1046,6 +1046,91 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/manager")
+def manager():
+    return render_template("manager.html")
+
+
+@app.get("/api/storage/drive")
+def api_storage_drive():
+    try:
+        root = Path(CONFIG["game_root"])
+        usage = shutil.disk_usage(root.anchor or root)
+        return jsonify({"total": usage.total, "used": usage.used, "free": usage.free})
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/storage/scan")
+def api_storage_scan():
+    data = request.get_json(force=True) or {}
+    root_text = str(data.get("root") or "").strip()
+    try:
+        root = Path(root_text).expanduser()
+        if not root_text or not root.exists() or not root.is_dir():
+            return jsonify({"error": "Choose an existing folder or drive."}), 400
+        limit = max(100, min(50000, int(data.get("limit", 10000))))
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    excluded = {
+        "$RECYCLE.BIN", "SYSTEM VOLUME INFORMATION", ".GIT",
+        ".VEN V", "NODE_MODULES", "__PYCACHE__", ".NEXT",
+        "WINDOWSAPPS", "WINSXS",
+    }
+    extensions: dict[str, dict[str, int]] = {}
+    largest: list[dict[str, Any]] = []
+    total_bytes = 0
+    file_count = 0
+    directory_count = 0
+    inspected = 0
+    truncated = False
+
+    def remember_large(path: Path, size: int) -> None:
+        largest.append({"path": str(path), "bytes": size})
+        largest.sort(key=lambda item: item["bytes"], reverse=True)
+        del largest[30:]
+
+    try:
+        for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+            dirs[:] = [name for name in dirs if name.upper() not in excluded and not Path(current, name).is_symlink()]
+            directory_count += len(dirs)
+            for filename in files:
+                if inspected >= limit:
+                    truncated = True
+                    break
+                inspected += 1
+                path = Path(current) / filename
+                try:
+                    if path.is_symlink():
+                        continue
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                file_count += 1
+                total_bytes += size
+                ext = path.suffix.lower() or "[no extension]"
+                bucket = extensions.setdefault(ext, {"count": 0, "bytes": 0})
+                bucket["count"] += 1
+                bucket["bytes"] += size
+                remember_large(path, size)
+            if truncated:
+                break
+    except OSError as exc:
+        return jsonify({"error": "Could not scan folder: " + str(exc)}), 500
+
+    return jsonify({
+        "root": str(root.resolve()),
+        "entries": inspected,
+        "files": file_count,
+        "folders": directory_count,
+        "bytes": total_bytes,
+        "truncated": truncated,
+        "extensions": extensions,
+        "large": largest,
+    })
+
+
 @app.get("/covers/<path:name>")
 def cover_file(name: str):
     filename = Path(name).name
@@ -1222,6 +1307,8 @@ def api_library_summary():
 
 
 def open_browser() -> None:
+    if os.environ.get("HERMES_DESKTOP") == "1":
+        return
     time.sleep(1.0)
     try:
         webbrowser.open("http://127.0.0.1:8765")

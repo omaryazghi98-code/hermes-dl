@@ -1871,9 +1871,13 @@ def fetch_latest_payload_release(repository: str) -> dict[str, Any]:
     notes = str(release.get("body") or "")
     compatibility_note = ""
     if repository == "EchoStretch/kstuff":
-        compatibility_note = "The v1.6.7 release notes describe support for PS5 firmware 3.00–10.01. Check the notes for the exact selected tag before sending."
+        if "10.01" in notes and re.search(r"3[.]00", notes):
+            compatibility_note = f"The {tag} release notes describe support for PS5 firmware 3.00–10.01. That does not document support for firmware 13.60; do not send this build there unless an official source explicitly confirms compatibility."
+        else:
+            compatibility_note = f"Verify the exact firmware range for {tag} in the official release notes before sending. Do not assume that the newest release supports every firmware."
     elif repository == "etaHEN/etaHEN":
-        compatibility_note = "Check the official release notes for firmware compatibility. This is the latest official stable release returned by GitHub, not an assumed 2.6 build."
+        if not re.search(r"(^|[^0-9])v?2[.]?6([bB]?)([^0-9]|$)", tag):
+            compatibility_note = f"The official GitHub latest-stable endpoint currently returns {tag}, not an etaHEN 2.6 tag. Check the official release page if you expected a newer build, and verify firmware compatibility before sending."
     return {
         "repository": repository,
         "label": source["label"],
@@ -2048,6 +2052,22 @@ def api_payloads_download_latest():
         return jsonify({"error": f"GitHub download failed: {exc}"}), 502
     except (OSError, ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/payloads/reorder")
+def api_payloads_reorder():
+    data = request.get_json(force=True) or {}
+    ordered_ids = data.get("ids")
+    if not isinstance(ordered_ids, list) or any(not isinstance(item_id, str) for item_id in ordered_ids):
+        return jsonify({"error": "Send an ordered list of playlist IDs."}), 400
+    items = load_payload_playlist()
+    current_ids = [str(item.get("id")) for item in items]
+    if len(ordered_ids) != len(current_ids) or set(ordered_ids) != set(current_ids):
+        return jsonify({"error": "Playlist order must include every existing entry exactly once."}), 400
+    by_id = {str(item.get("id")): item for item in items}
+    reordered = [by_id[item_id] for item_id in ordered_ids]
+    save_payload_playlist(reordered)
+    return jsonify({"ok": True, "items": [payload_item_for_response(item) for item in reordered]})
 
 
 @app.post("/api/payloads/remove")

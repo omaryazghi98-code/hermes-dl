@@ -1511,7 +1511,8 @@ def api_ps5upload_transfer():
         engine_url = ps5upload_origin(data)
         ps5_ip = private_lan_ip(data.get("ps5_ip") or CONFIG.get("ps5_ip"))
         local_file = allowed_local_transfer_file(data.get("local_path"))
-        remote_path = remote_ps5_path(data.get("remote_path"))
+        remote_directory = remote_ps5_path(data.get("remote_path"))
+        remote_path = posixpath.join(remote_directory, local_file.name)
         update_config({"ps5_ip": ps5_ip, "ps5upload_engine_url": engine_url})
         if local_file.stat().st_size <= 0:
             return jsonify({"error": "The selected local file is empty."}), 400

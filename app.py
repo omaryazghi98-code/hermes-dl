@@ -1539,6 +1539,28 @@ def api_ps5upload_transfer():
         return jsonify({"error": "PS5Upload engine request failed: " + str(exc)}), 502
 
 
+@app.post("/api/ps5upload/pkg/inspect")
+def api_ps5upload_pkg_inspect():
+    data = request.get_json(force=True) or {}
+    try:
+        engine_url = ps5upload_origin(data)
+        local_file = allowed_local_transfer_file(data.get("local_path"))
+        if local_file.suffix.lower() != ".pkg":
+            return jsonify({"error": "Choose a single .pkg file. Split package sets are not supported by this inspector."}), 400
+        response = ps5upload_request("POST", "/api/pkg/parse", engine_url=engine_url, body={"path": str(local_file)}, timeout=30)
+        try:
+            metadata = response.json()
+        except ValueError:
+            metadata = {"error": response.text[:500]}
+        if not response.ok:
+            return jsonify({"error": metadata.get("error") or "PS5Upload could not inspect this package.", "metadata": metadata}), response.status_code
+        return jsonify({"ok": True, "local_path": str(local_file), "metadata": metadata})
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.RequestException as exc:
+        return jsonify({"error": "PS5Upload package inspection failed: " + str(exc)}), 502
+
+
 @app.post("/api/ps5upload/pkg/install")
 def api_ps5upload_pkg_install():
     data = request.get_json(force=True) or {}
@@ -1551,9 +1573,35 @@ def api_ps5upload_pkg_install():
             return jsonify({"error": "Choose a single .pkg file. Split package sets need to be selected through PS5Upload's own package workflow."}), 400
         if local_file.stat().st_size <= 0:
             return jsonify({"error": "The selected PKG file is empty."}), 400
+        inspect_response = ps5upload_request(
+            "POST",
+            "/api/pkg/parse",
+            engine_url=engine_url,
+            body={"path": str(local_file)},
+            timeout=30,
+        )
+        try:
+            metadata = inspect_response.json()
+        except ValueError:
+            metadata = {}
+        if not inspect_response.ok:
+            return jsonify({"error": metadata.get("error") or "PS5Upload could not read this package's metadata."}), inspect_response.status_code
+        content_id = str(metadata.get("content_id") or "").strip()
+        title_id = str(metadata.get("title_id") or "").strip()
+        category = str(metadata.get("category") or "").strip()
+        app_ver = str(metadata.get("app_ver") or "").strip()
+        title = str(metadata.get("title") or "").strip()
+        if not content_id or not title_id or not category:
+            return jsonify({"error": "Package metadata is incomplete (Content ID, Title ID or category missing). Hermes refused to install it so it cannot skip the installer's safety checks.", "metadata": metadata}), 400
+        if title_id.upper().startswith("NPXS") or content_id.upper().startswith("NPXS"):
+            return jsonify({"error": "System packages (NPXS titles) are not supported by this workflow. Use the console's own Package Installer workflow.", "metadata": metadata}), 400
         payload = {
             "ps5_addr": ps5_ip,
             "source": {"host_file": str(local_file)},
+            "content_id": content_id,
+            "title_id": title_id,
+            "category": category,
+            "package_app_ver": app_ver or None,
             "options": {
                 "delete_source_copy_after": False,
                 "allow_destructive_reinstall": False,
@@ -1577,7 +1625,7 @@ def api_ps5upload_pkg_install():
         if not response.ok or result.get("ok") is False or not result.get("job"):
             return jsonify({"error": result.get("error") or "PS5Upload did not accept the package installation.", "engine_response": result}), response.status_code if not response.ok else 502
         activity("PS5Upload install queued: " + local_file.name + " on " + ps5_ip)
-        return jsonify({"ok": True, "job_id": str(result["job"]), "kind": "install", "local_path": str(local_file), "engine_url": engine_url}), 202
+        return jsonify({"ok": True, "job_id": str(result["job"]), "kind": "install", "local_path": str(local_file), "engine_url": engine_url, "metadata": {"title": title, "content_id": content_id, "title_id": title_id, "category": category, "app_ver": app_ver}}), 202
     except (ValueError, OSError) as exc:
         return jsonify({"error": str(exc)}), 400
     except requests.RequestException as exc:

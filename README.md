@@ -19,8 +19,9 @@ The existing browser-based version is still available with `start.bat` at `http:
 - **Visible browser fallback:** the Browser tab is a real embedded Chromium browser in the Electron desktop app. Navigate to a ProsperoPatches title page, then use **Use current browser page metadata** on the PS5 Library page if automated lookup does not work.
 - **Built-in ad blocker:** the embedded browser uses EasyList-compatible ad and tracking filters. Use the Browser tab's **Ads & trackers** toggle to turn filtering on or off, or **Refresh filter lists** to download fresh rules. Filter data is cached locally; if filter downloads fail, Hermes falls back to a smaller domain blocklist. Ad blocking is not perfect, especially for ads served from the same domain as the page or dynamically inserted video ads.
 - **PS5 library view:** shows recognized jobs, title IDs, artwork, and destinations.
-- **Storage scanner:** read-only inventory of a selected folder or drive, including file-type counts, largest files, and possible duplicate candidates based on matching filename and size.
-- **Folder shortcuts and settings:** open configured folders and update the staging, temporary, game, and inbox paths.
+- **D: Drive Manager:** audit configured folder paths, tool executables, free space and duplicate folder targets; explicitly create missing configured directories that are inside the selected drive; preview a type-based organization plan for loose files directly in a folder; then move only the files you check and confirm.
+- **Storage scanner:** read-only recursive inventory of a selected folder or drive, including file-type counts, largest files, and possible duplicate candidates based on matching filename and size.
+- **Folder shortcuts and settings:** open configured folders and update the staging, temporary, game, inbox, and FTP staging paths.
 - **Activity log:** recent watcher and metadata activity.
 
 ## Default folder layout
@@ -44,7 +45,9 @@ Paths can be changed from Settings. The scanner defaults to `D:\\` and inspects 
 
 - Hermes does **not** delete source archives after extraction.
 - Storage scans are read-only. Duplicate candidates are only files sharing a filename and size; they are not proof of identical contents.
-- Nothing is moved, renamed, or deleted by the storage scanner.
+- The recursive storage inventory scan is read-only. The separate D: organization action only previews direct-child files and moves individual files you select and confirm; it does not recurse into subfolders or move directories.
+- RAR and recognized split archive sets are excluded from the organizer. Unknown file types are left untouched, existing destination files are never overwritten, and the Hermes installation directory is protected.
+- Creating missing folders only creates configured directories inside the selected root; paths outside that drive/folder are reported and skipped.
 - Archive sets must pass a WinRAR integrity test before extraction.
 - Unknown/unresolved metadata falls back to the configured inbox.
 - Use the scanner's results as a review list, not as automatic cleanup instructions.

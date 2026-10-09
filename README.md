@@ -57,6 +57,14 @@ Hermes is the control panel; it does not attempt to replace specialist tools.
 - **Orbit Zero:** optionally launch the Orbit Zero desktop app by configuring its executable path in Settings. Orbit Zero is the computer-side download-and-transfer route; it is separate from Orbit Store's PS5-side service. Get it from the [official Orbit Store repository](https://github.com/saawant12/orbit-store-ps5).
 - **PS5Upload:** configure its desktop executable and local engine origin (default `http://127.0.0.1:19113`). Hermes can check engine/console connectivity, queue a single-file transfer to an absolute PS5 path, poll transfer status, inspect local PKG metadata (title, Title ID, category, version and Content ID), and submit installation of a local single-file `.pkg`. The integration calls the existing [PS5Upload engine](https://github.com/phantomptr/ps5upload) rather than reimplementing its AVA1 protocol.
 - **FTP:** browse a compatible FTP server, upload a selected local file, or download a remote file to the configured local FTP folder. FileZilla may be launched as an optional external client.
+- **Payload Sender:** keep an ordered local playlist of your own `.elf`, `.bin` or `.payload` files and payload assets from the official latest-release APIs for [etaHEN](https://github.com/etaHEN/etaHEN/releases) and [kstuff](https://github.com/EchoStretch/kstuff/releases). Official assets are downloaded into `data/payloads/` and SHA-256 checked when GitHub provides a digest. Each send is a separate, explicitly confirmed TCP transfer to the chosen PS5 LAN IP and loader port (9020/9021 are common ports). Removing a playlist entry does not delete its file.
+
+### Payload sender notes
+
+- Hermes resolves the upstream **latest stable release** live; it does not assume that a version number is published. At the time of the last upstream check, etaHEN's official latest-stable API returned **2.5B**, not 2.6; check the live list for future changes.
+- The upstream kstuff **v1.6.7** release notes describe firmware 3.00–10.01. That is outside the previously reported PS5 firmware 13.60; do not send that build to 13.60 unless a trusted official source explicitly confirms support for that firmware.
+- A payload loader must already be listening at the selected IP and port. A completed send means bytes were written to the TCP connection; Hermes cannot verify that the payload ran, nor does it guarantee firmware compatibility.
+- The sender only accepts private IPv4 LAN destinations, payload extensions `.elf`, `.bin`, and `.payload`, and files up to 256 MiB. Local custom payloads are referenced in place rather than copied. Downloaded official assets remain on disk even if their playlist entries are removed.
 
 ### Safety and connection notes
 

@@ -52,7 +52,7 @@
 <section class="page" id="page-browser">
  <div class="card"><div class="sectionhead"><h2>Visible browser</h2><span class="badge">Persistent session</span></div><div class="muted">This panel is an actual embedded Chromium browser in the desktop app, not a headless crawler. Use it to inspect pages that need JavaScript or manual interaction.</div>
   <div class="browserbar" style="margin-top:14px"><input id="browserUrl" value="https://prosperopatches.com/" spellcheck="false"><button onclick="navigateBrowser()">Go</button><button onclick="browserBack()">Back</button><button onclick="browserForward()">Forward</button><button onclick="browserReload()">Reload</button></div>
-  <div class="actions" style="margin:8px 0"><button id="browserAdblockToggle" onclick="toggleBrowserAdblock()">Ad blocker: checking…</button><span id="browserAdblockBadge" class="badge">Loading filters</span></div>
+  <div class="actions" style="margin:8px 0"><button id="browserAdblockToggle" onclick="toggleBrowserAdblock()">Ad blocker: checking…</button><button id="browserAdblockRefresh" onclick="refreshBrowserAdblockFilters()">Refresh filter lists</button><span id="browserAdblockBadge" class="badge">Loading filters</span></div>
   <div id="browserAdblockStatus" class="browser-note">Ad and tracker filtering applies only to pages opened in Hermes' embedded browser.</div>
   <div id="browserFallback" class="banner">The integrated browser is available in the desktop launcher. If you opened the web dashboard in a normal browser, this panel cannot embed external pages.</div>
   <webview id="webview" class="browser hidden" src="https://prosperopatches.com/" partition="persist:hermes-browser" allowpopups></webview>
@@ -398,6 +398,21 @@ async function updateBrowserAdblockStatus(){
   }
   try{paintBrowserAdblock(await window.hermesDesktop.getAdblockStatus())}
   catch(e){paintBrowserAdblock({ready:false,enabled:false,mode:'unavailable',message:'Could not read the ad-block status: '+e.message})}
+}
+async function refreshBrowserAdblockFilters(){
+  const api=window.hermesDesktop;
+  if(!api?.refreshAdblockFilters){alert('Filter updates are available only in the Hermes desktop app.');return}
+  const button=$('browserAdblockRefresh'),status=$('browserAdblockStatus');
+  if(button){button.disabled=true;button.textContent='Refreshing…'}
+  if(status)status.textContent='Downloading fresh filter lists. This can take several seconds; if the download fails, Hermes will keep its basic fallback filter.';
+  try{
+    const state=await api.refreshAdblockFilters();
+    paintBrowserAdblock(state);
+    const w=$('webview');
+    if(w&&typeof w.reload==='function'&&w.getURL())w.reload();
+  }catch(e){
+    if(status)status.textContent='Could not refresh filter lists: '+e.message;
+  }finally{if(button){button.disabled=false;button.textContent='Refresh filter lists'}}
 }
 async function toggleBrowserAdblock(){
   const api=window.hermesDesktop;

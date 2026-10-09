@@ -48,6 +48,27 @@ Paths can be changed from Settings. The scanner defaults to `D:\\` and inspects 
 - Unknown/unresolved metadata falls back to the configured inbox.
 - Use the scanner's results as a review list, not as automatic cleanup instructions.
 
+## Integrated download and PS5 tools
+
+Hermes is the control panel; it does not attempt to replace specialist tools.
+
+- **IDM:** Download Center can send a direct HTTP/HTTPS URL to Internet Download Manager through its command-line interface. Choose queue or start, then let IDM handle retries and download management. Downloads placed in the configured IDM staging folder are handled by the existing watcher.
+- **Orbit Store:** the Console & Transfers page checks the PS5 web interface at `http://<ps5-ip>:34177/` and opens it in Hermes' visible browser for the documented pairing-code workflow. Enter the code shown on your PS5 in Orbit itself; Hermes does not bypass pairing.
+- **Orbit Zero:** optionally launch the Orbit Zero desktop app by configuring its executable path in Settings. Orbit Zero is the computer-side download-and-transfer route; it is separate from Orbit Store's PS5-side service. Get it from the [official Orbit Store repository](https://github.com/saawant12/orbit-store-ps5).
+- **PS5Upload:** configure its desktop executable and local engine origin (default `http://127.0.0.1:19113`). Hermes can check engine/console connectivity, queue a single-file transfer to an absolute PS5 path, poll transfer status, and submit installation of a local single-file `.pkg`. The integration calls the existing [PS5Upload engine](https://github.com/phantomptr/ps5upload) rather than reimplementing its AVA1 protocol.
+- **FTP:** browse a compatible FTP server, upload a selected local file, or download a remote file to the configured local FTP folder. FileZilla may be launched as an optional external client.
+
+### Safety and connection notes
+
+- The PS5, computer, Orbit interface, FTP service and PS5Upload engine must be on a trusted network where they can reach one another.
+- PS5Upload's engine is powerful and does not provide its own password authentication. Hermes accepts only a loopback PS5Upload engine URL by default; do not expose that engine to the internet.
+- Set the PS5's LAN IPv4 address in Console & Transfers and run **Check connections** before transferring or installing.
+- Local transfer/install sources must be inside one of Hermes' configured library folders. Configure `FTP downloads to this local folder` under Settings for additional staging space.
+- The PKG installer requires an ordinary `.pkg` file. Split-package workflows should be handled in the PS5Upload client until Hermes adds explicit split-set support. PS5 system packages are not part of this installer workflow.
+- Hermes leaves PS5Upload's destructive-reinstall option disabled and does not request deletion of the local PKG. Nevertheless, package installation can affect existing console content; confirm the title and package type before installing.
+- FTP credentials are used only for the current connection request and are not saved in Hermes configuration. Hermes will not overwrite an existing local or remote file and has no remote-delete action.
+- Large downloads and extractions on external storage should remain sequential by default, particularly when a disk has previously shown I/O retry/reset errors.
+
 ## Metadata source
 
 The canonical title page format is:

@@ -1277,16 +1277,20 @@ def ftp_transfer_worker(job_id: str, mode: str, data: dict[str, Any], local_file
             transferred = 0
             last_update = 0
             update_ftp_job(job_id, status="transferring", total_bytes=total, remote_path=remote_path, local_path=str(target))
-            def download_progress(block: bytes) -> None:
-                nonlocal transferred, last_update
-                with temp_path.open("ab") as handle:
-                    handle.write(block)
-                transferred += len(block)
-                if transferred - last_update >= 4 * 1024 * 1024 or (total and transferred >= total):
-                    update_ftp_job(job_id, bytes_done=transferred, total_bytes=total)
-                    last_update = transferred
             temp_path.touch(exist_ok=False)
-            ftp.retrbinary("RETR " + remote_path, download_progress, blocksize=1024 * 1024)
+            with temp_path.open("wb") as handle:
+                def download_progress(block: bytes) -> None:
+                    nonlocal transferred, last_update
+                    handle.write(block)
+                    transferred += len(block)
+                    if transferred - last_update >= 4 * 1024 * 1024 or (total and transferred >= total):
+                        update_ftp_job(job_id, bytes_done=transferred, total_bytes=total)
+                        last_update = transferred
+                ftp.retrbinary("RETR " + remote_path, download_progress, blocksize=1024 * 1024)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if total and transferred != total:
+                raise IOError("FTP download size mismatch: expected " + str(total) + " bytes, received " + str(transferred) + ". The incomplete temporary file was not promoted.")
             if target.exists():
                 raise FileExistsError("The local destination appeared during transfer; original downloaded bytes were kept in a temporary file.")
             temp_path.replace(target)

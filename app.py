@@ -125,9 +125,6 @@ def ensure_layout() -> None:
             pass
 
 
-ensure_layout()
-
-
 def activity(message: str) -> None:
     line = time.strftime("%Y-%m-%d %H:%M:%S") + " | " + message
     try:

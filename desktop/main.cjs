@@ -131,8 +131,6 @@ async function initializeBrowserAdBlocking() {
 
     if (browserAdBlockEnabled) {
       browserAdBlocker.enableBlockingInSession(browserSession);
-    } else {
-      browserAdBlocker.disableBlockingInSession(browserSession);
     }
     browserAdBlockState = {
       ready: true,
@@ -161,9 +159,10 @@ async function initializeBrowserAdBlocking() {
 function setBrowserAdBlockEnabled(enabled) {
   browserAdBlockEnabled = enabled === true;
   if (browserAdBlocker) {
-    if (browserAdBlockEnabled) {
+    const currentlyEnabled = browserAdBlocker.isBlockingEnabled(browserSession);
+    if (browserAdBlockEnabled && !currentlyEnabled) {
       browserAdBlocker.enableBlockingInSession(browserSession);
-    } else {
+    } else if (!browserAdBlockEnabled && currentlyEnabled) {
       browserAdBlocker.disableBlockingInSession(browserSession);
     }
     browserFallbackActive = false;

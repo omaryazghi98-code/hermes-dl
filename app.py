@@ -2379,7 +2379,7 @@ def api_storage_create_missing_paths():
         if storage_same_path(str(path), str(root)):
             skipped.append({"label": label, "path": raw, "reason": "A managed folder cannot be the entire selected drive"})
             continue
-        if storage_path_within(APP_DIR.resolve(), path):
+        if storage_path_within(APP_DIR.resolve(), path) or storage_path_within(path, APP_DIR.resolve()):
             skipped.append({"label": label, "path": raw, "reason": "Protected because it is inside or contains the Hermes installation"})
             continue
         try:

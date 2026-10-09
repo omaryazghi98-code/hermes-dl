@@ -185,8 +185,30 @@ function setBrowserAdBlockEnabled(enabled) {
   return { ...browserAdBlockState };
 }
 
+async function refreshBrowserAdBlockFilters() {
+  if (browserAdBlocker && browserSession && browserAdBlocker.isBlockingEnabled(browserSession)) {
+    browserAdBlocker.disableBlockingInSession(browserSession);
+  } else {
+    disableFallbackAdFilter();
+  }
+  browserAdBlocker = null;
+  browserFallbackActive = false;
+
+  const cachePath = path.join(app.getPath("userData"), "hermes-browser", "adblocker-engine.bin");
+  try { fs.unlinkSync(cachePath); } catch (_) {}
+
+  browserAdBlockState = {
+    ready: false,
+    enabled: browserAdBlockEnabled,
+    mode: "refreshing",
+    message: "Refreshing cached ad and tracker filter lists…"
+  };
+  return initializeBrowserAdBlocking();
+}
+
 ipcMain.handle("hermes:adblock:get-status", () => ({ ...browserAdBlockState }));
 ipcMain.handle("hermes:adblock:set-enabled", (_event, enabled) => setBrowserAdBlockEnabled(enabled));
+ipcMain.handle("hermes:adblock:refresh", () => refreshBrowserAdBlockFilters());
 
 function portIsAvailable(port) {
   return new Promise(resolve => {

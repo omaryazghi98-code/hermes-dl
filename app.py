@@ -9,6 +9,8 @@ import os
 import posixpath
 import re
 import shutil
+import socket
+import hashlib
 import subprocess
 import threading
 import time
@@ -117,6 +119,7 @@ def ensure_layout() -> None:
         CONFIG.get("ftp_local_root", CONFIG["inbox_root"]),
         str(Path(CONFIG["automation_root"]) / "covers"),
         str(Path(CONFIG["automation_root"]) / "logs"),
+        str(DATA_DIR / "payloads"),
     ]
     for value in paths:
         try:
@@ -1746,6 +1749,385 @@ def api_ftp_jobs():
         jobs = [dict(value) for value in FTP_JOBS.values()]
     jobs.sort(key=lambda item: item.get("created_at", 0), reverse=True)
     return jsonify(jobs[:20])
+
+
+# ---------------- PS5 Payload Sender ----------------
+PAYLOAD_PLAYLIST_FILE = DATA_DIR / "payload_playlist.json"
+PAYLOAD_DOWNLOAD_DIR = DATA_DIR / "payloads"
+PAYLOAD_EXTENSIONS = {".elf", ".bin", ".payload"}
+MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
+PAYLOAD_RELEASE_SOURCES = {
+    "etaHEN/etaHEN": {
+        "label": "etaHEN",
+        "api_url": "https://api.github.com/repos/etaHEN/etaHEN/releases/latest",
+        "repo_url": "https://github.com/etaHEN/etaHEN",
+    },
+    "EchoStretch/kstuff": {
+        "label": "kstuff",
+        "api_url": "https://api.github.com/repos/EchoStretch/kstuff/releases/latest",
+        "repo_url": "https://github.com/EchoStretch/kstuff",
+    },
+}
+PAYLOAD_JOBS: dict[str, dict[str, Any]] = {}
+PAYLOAD_JOB_LOCK = threading.Lock()
+
+
+def load_payload_playlist() -> list[dict[str, Any]]:
+    raw = load_json(PAYLOAD_PLAYLIST_FILE, [])
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict) and item.get("id") and item.get("path")]
+
+
+def save_payload_playlist(items: list[dict[str, Any]]) -> None:
+    save_json(PAYLOAD_PLAYLIST_FILE, items)
+
+
+def payload_item_for_response(item: dict[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    path = Path(str(item.get("path", "")))
+    result["exists"] = path.is_file()
+    if result["exists"]:
+        try:
+            result["size"] = path.stat().st_size
+        except OSError:
+            result["size"] = item.get("size", 0)
+    return result
+
+
+def payload_job_update(job_id: str, **updates: Any) -> None:
+    with PAYLOAD_JOB_LOCK:
+        job = PAYLOAD_JOBS.get(job_id)
+        if job is not None:
+            job.update(updates)
+            job["updated_at"] = time.time()
+
+
+def payload_sender_worker(job_id: str, source_path: str, target_ip: str, target_port: int) -> None:
+    path = Path(source_path)
+    try:
+        total_bytes = path.stat().st_size
+        payload_job_update(job_id, status="connecting", total_bytes=total_bytes, bytes_sent=0)
+        with socket.create_connection((target_ip, target_port), timeout=6) as client:
+            client.settimeout(15)
+            payload_job_update(job_id, status="sending")
+            bytes_sent = 0
+            with path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(64 * 1024)
+                    if not chunk:
+                        break
+                    client.sendall(chunk)
+                    bytes_sent += len(chunk)
+                    payload_job_update(job_id, bytes_sent=bytes_sent)
+            try:
+                client.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+        payload_job_update(
+            job_id,
+            status="sent",
+            bytes_sent=bytes_sent,
+            completed_at=time.time(),
+            message="All payload bytes were written to the TCP connection. This does not confirm that the PS5 loader executed the payload.",
+        )
+        activity(f"PAYLOAD SENT: {path.name} -> {target_ip}:{target_port} ({bytes_sent} bytes written)")
+    except Exception as exc:
+        payload_job_update(job_id, status="failed", error=str(exc), completed_at=time.time())
+        activity(f"PAYLOAD SEND FAILED: {path.name} -> {target_ip}:{target_port}: {exc}")
+
+
+def fetch_latest_payload_release(repository: str) -> dict[str, Any]:
+    source = PAYLOAD_RELEASE_SOURCES.get(repository)
+    if not source:
+        raise ValueError("Only the configured official etaHEN and EchoStretch/kstuff repositories are supported.")
+    response = requests.get(
+        source["api_url"],
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "Hermes-Payload-Sender"},
+        timeout=15,
+    )
+    if response.status_code == 404:
+        raise ValueError(f"No published release was found for {repository}.")
+    response.raise_for_status()
+    release = response.json()
+    if release.get("draft") or release.get("prerelease"):
+        raise ValueError("The upstream API did not return a stable latest release.")
+    assets = []
+    for asset in release.get("assets", []):
+        name = str(asset.get("name") or "")
+        if Path(name).suffix.lower() not in PAYLOAD_EXTENSIONS:
+            continue
+        if not asset.get("browser_download_url") or not asset.get("size"):
+            continue
+        assets.append({
+            "name": name,
+            "size": int(asset["size"]),
+            "download_count": int(asset.get("download_count") or 0),
+            "digest": asset.get("digest"),
+        })
+    if not assets:
+        raise ValueError(f"The latest release for {repository} has no .elf, .bin or .payload asset.")
+    tag = str(release.get("tag_name") or "")
+    notes = str(release.get("body") or "")
+    compatibility_note = ""
+    if repository == "EchoStretch/kstuff":
+        compatibility_note = "The v1.6.7 release notes describe support for PS5 firmware 3.00–10.01. Check the notes for the exact selected tag before sending."
+    elif repository == "etaHEN/etaHEN":
+        compatibility_note = "Check the official release notes for firmware compatibility. This is the latest official stable release returned by GitHub, not an assumed 2.6 build."
+    return {
+        "repository": repository,
+        "label": source["label"],
+        "release_name": release.get("name") or tag,
+        "tag": tag,
+        "published_at": release.get("published_at"),
+        "url": release.get("html_url") or source["repo_url"],
+        "repo_url": source["repo_url"],
+        "release_notes": notes[:1600],
+        "compatibility_note": compatibility_note,
+        "assets": assets,
+    }
+
+
+@app.get("/api/payloads")
+def api_payloads_list():
+    items = [payload_item_for_response(item) for item in load_payload_playlist()]
+    with PAYLOAD_JOB_LOCK:
+        jobs = sorted(
+            (dict(job) for job in PAYLOAD_JOBS.values()),
+            key=lambda item: float(item.get("created_at", 0)),
+            reverse=True,
+        )[:20]
+    return jsonify({"items": items, "jobs": jobs})
+
+
+@app.get("/api/payloads/releases")
+def api_payloads_latest_releases():
+    releases = []
+    errors = {}
+    for repository in PAYLOAD_RELEASE_SOURCES:
+        try:
+            releases.append(fetch_latest_payload_release(repository))
+        except Exception as exc:
+            errors[repository] = str(exc)
+    return jsonify({
+        "releases": releases,
+        "errors": errors,
+        "checked_at": time.time(),
+    })
+
+
+@app.post("/api/payloads/add-local")
+def api_payloads_add_local():
+    data = request.get_json(force=True) or {}
+    raw_path = str(data.get("path") or data.get("local_path") or "").strip().strip('"')
+    if not raw_path:
+        return jsonify({"error": "Choose a local payload file first."}), 400
+    try:
+        path = Path(raw_path).expanduser().resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("The selected payload path is not a file.")
+        if path.suffix.lower() not in PAYLOAD_EXTENSIONS:
+            raise ValueError("Use a .elf, .bin or .payload file.")
+        size = path.stat().st_size
+        if size <= 0:
+            raise ValueError("The selected payload file is empty.")
+        if size > MAX_PAYLOAD_BYTES:
+            raise ValueError("Payload files larger than 256 MiB are not accepted.")
+    except (OSError, RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    items = load_payload_playlist()
+    existing = next((item for item in items if str(Path(str(item.get("path", ""))).resolve()) == str(path)), None)
+    if existing:
+        return jsonify({"ok": True, "already_added": True, "item": payload_item_for_response(existing)})
+    item = {
+        "id": uuid.uuid4().hex,
+        "name": str(data.get("name") or path.stem).strip()[:100] or path.stem,
+        "filename": path.name,
+        "path": str(path),
+        "size": size,
+        "source": "local",
+        "added_at": time.time(),
+    }
+    items.append(item)
+    save_payload_playlist(items)
+    activity(f"PAYLOAD ADDED: {path.name} ({size} bytes)")
+    return jsonify({"ok": True, "item": payload_item_for_response(item)}), 201
+
+
+@app.post("/api/payloads/releases/download")
+def api_payloads_download_latest():
+    data = request.get_json(force=True) or {}
+    repository = str(data.get("repository") or "")
+    asset_name = str(data.get("asset_name") or "")
+    if repository not in PAYLOAD_RELEASE_SOURCES or not asset_name or Path(asset_name).name != asset_name:
+        return jsonify({"error": "Select a payload asset from a listed official release."}), 400
+    try:
+        release = fetch_latest_payload_release(repository)
+        asset_meta = next((asset for asset in release["assets"] if asset["name"] == asset_name), None)
+        if not asset_meta:
+            return jsonify({"error": "That asset is no longer part of the latest official release. Refresh the release list."}), 409
+        if asset_meta["size"] > MAX_PAYLOAD_BYTES:
+            return jsonify({"error": "The upstream asset is larger than the 256 MiB safety limit."}), 400
+        source = PAYLOAD_RELEASE_SOURCES[repository]
+        api_response = requests.get(
+            source["api_url"],
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "Hermes-Payload-Sender"},
+            timeout=15,
+        )
+        api_response.raise_for_status()
+        latest = api_response.json()
+        remote_asset = next(
+            (asset for asset in latest.get("assets", []) if asset.get("name") == asset_name),
+            None,
+        )
+        if not remote_asset or Path(str(remote_asset.get("name") or "")).suffix.lower() not in PAYLOAD_EXTENSIONS:
+            return jsonify({"error": "Could not re-verify the asset against the official release API."}), 409
+        download_url = str(remote_asset.get("browser_download_url") or "")
+        parsed_url = urllib.parse.urlparse(download_url)
+        if parsed_url.scheme != "https" or parsed_url.hostname != "github.com" or not parsed_url.path.startswith(f"/{repository}/releases/download/"):
+            return jsonify({"error": "The official release returned an unexpected download URL."}), 502
+        target_dir = PAYLOAD_DOWNLOAD_DIR / repository
+        target_dir = target_dir / re.sub(r"[^A-Za-z0-9._-]+", "_", str(release["tag"]))
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / asset_name
+        temp_path = target_dir / (asset_name + "." + uuid.uuid4().hex + ".part")
+        digest = hashlib.sha256()
+        size_written = 0
+        try:
+            with requests.get(download_url, headers={"User-Agent": "Hermes-Payload-Sender"}, stream=True, timeout=(12, 30)) as download:
+                download.raise_for_status()
+                with temp_path.open("wb") as handle:
+                    for chunk in download.iter_content(chunk_size=128 * 1024):
+                        if not chunk:
+                            continue
+                        size_written += len(chunk)
+                        if size_written > MAX_PAYLOAD_BYTES:
+                            raise ValueError("The downloaded asset exceeded the 256 MiB safety limit.")
+                        digest.update(chunk)
+                        handle.write(chunk)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            if size_written != int(remote_asset.get("size") or -1):
+                raise ValueError(f"Download size mismatch: expected {remote_asset.get('size')} bytes, received {size_written}.")
+            expected_digest = remote_asset.get("digest")
+            actual_digest = "sha256:" + digest.hexdigest()
+            if expected_digest and expected_digest.lower() != actual_digest.lower():
+                raise ValueError("SHA-256 verification failed for the official release asset.")
+            if target_path.exists():
+                existing_digest = hashlib.sha256(target_path.read_bytes()).hexdigest()
+                if existing_digest != digest.hexdigest():
+                    target_path = target_dir / (Path(asset_name).stem + "-" + digest.hexdigest()[:8] + Path(asset_name).suffix)
+            os.replace(temp_path, target_path) if not target_path.exists() else temp_path.unlink(missing_ok=True)
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        items = load_payload_playlist()
+        existing = next((item for item in items if item.get("path") == str(target_path)), None)
+        if existing:
+            return jsonify({"ok": True, "already_added": True, "item": payload_item_for_response(existing), "release": release})
+        item = {
+            "id": uuid.uuid4().hex,
+            "name": f"{release['label']} {release['tag']}",
+            "filename": target_path.name,
+            "path": str(target_path),
+            "size": size_written,
+            "source": "official",
+            "repository": repository,
+            "version": release["tag"],
+            "release_url": release["url"],
+            "sha256": digest.hexdigest(),
+            "added_at": time.time(),
+        }
+        items.append(item)
+        save_payload_playlist(items)
+        activity(f"PAYLOAD DOWNLOADED: {repository}@{release['tag']} / {asset_name} ({size_written} bytes; SHA-256 verified)")
+        return jsonify({"ok": True, "item": payload_item_for_response(item), "release": release}), 201
+    except requests.RequestException as exc:
+        return jsonify({"error": f"GitHub download failed: {exc}"}), 502
+    except (OSError, ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/payloads/remove")
+def api_payloads_remove():
+    data = request.get_json(force=True) or {}
+    item_id = str(data.get("id") or "")
+    items = load_payload_playlist()
+    remaining = [item for item in items if str(item.get("id")) != item_id]
+    if len(remaining) == len(items):
+        return jsonify({"error": "Payload entry not found."}), 404
+    save_payload_playlist(remaining)
+    # Intentionally keep all files on disk, including downloaded release assets.
+    return jsonify({"ok": True, "items": [payload_item_for_response(item) for item in remaining]})
+
+
+@app.post("/api/payloads/send")
+def api_payloads_send():
+    data = request.get_json(force=True) or {}
+    item_id = str(data.get("id") or "")
+    raw_ip = str(data.get("ip") or CONFIG.get("ps5_ip") or "").strip()
+    try:
+        target_ip = private_lan_ip(raw_ip)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        target_port = int(data.get("port") or 9021)
+        if not 1 <= target_port <= 65535:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a TCP port between 1 and 65535 (common PS5 payload-loader ports are 9020 and 9021)."}), 400
+    items = load_payload_playlist()
+    item = next((entry for entry in items if str(entry.get("id")) == item_id), None)
+    if item is None:
+        return jsonify({"error": "Choose a payload from the playlist."}), 404
+    try:
+        path = Path(str(item.get("path") or "")).resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("Payload file not found on this PC.")
+        if path.suffix.lower() not in PAYLOAD_EXTENSIONS:
+            raise ValueError("Only .elf, .bin and .payload files can be sent.")
+        size = path.stat().st_size
+        if size <= 0 or size > MAX_PAYLOAD_BYTES:
+            raise ValueError("Payload must be non-empty and no larger than 256 MiB.")
+    except (OSError, RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    job = {
+        "id": job_id,
+        "payload_id": item_id,
+        "name": item.get("name") or path.name,
+        "filename": path.name,
+        "target_ip": target_ip,
+        "target_port": target_port,
+        "status": "queued",
+        "bytes_sent": 0,
+        "total_bytes": size,
+        "message": "Waiting for the sender thread.",
+        "created_at": now,
+        "updated_at": now,
+    }
+    with PAYLOAD_JOB_LOCK:
+        PAYLOAD_JOBS[job_id] = job
+    threading.Thread(
+        target=payload_sender_worker,
+        args=(job_id, str(path), target_ip, target_port),
+        name=f"HermesPayload-{job_id[:8]}",
+        daemon=True,
+    ).start()
+    activity(f"PAYLOAD SEND QUEUED: {path.name} -> {target_ip}:{target_port}")
+    return jsonify({"ok": True, "job": dict(job)}), 202
+
+
+@app.get("/api/payloads/jobs/<job_id>")
+def api_payloads_job(job_id: str):
+    with PAYLOAD_JOB_LOCK:
+        job = PAYLOAD_JOBS.get(job_id)
+        if job is not None:
+            return jsonify(dict(job))
+    return jsonify({"error": "Payload send job not found; restart may have cleared the in-memory history."}), 404
 
 
 @app.get("/manager")

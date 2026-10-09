@@ -33,16 +33,21 @@ if errorlevel 1 (
 )
 
 echo [4/4] Installing desktop dependencies if needed...
-if not exist "desktop\node_modules\electron\dist\electron.exe" (
-  pushd desktop
-  call npm install
-  if errorlevel 1 (
-    popd
-    goto fail
-  )
-  popd
-)
+if not exist "desktop\node_modules\electron\dist\electron.exe" goto install_desktop_deps
+if not exist "desktop\node_modules\@ghostery\adblocker-electron\package.json" goto install_desktop_deps
+if not exist "desktop\node_modules\cross-fetch\package.json" goto install_desktop_deps
+goto start_desktop
 
+:install_desktop_deps
+pushd desktop
+call npm install
+if errorlevel 1 (
+  popd
+  goto fail
+)
+popd
+
+:start_desktop
 echo Starting Hermes Manager...
 pushd desktop
 call npm run desktop

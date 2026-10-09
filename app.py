@@ -2254,6 +2254,9 @@ def storage_is_managed_root(path: Path) -> bool:
         for key in STORAGE_DIRECTORY_CONFIG
         if CONFIG.get(key)
     ]
+    # Avoid recursively processing a prior output folder as though it were loose drive root content.
+    if any(part.casefold() == "_organized" for part in path.parts):
+        return True
     for candidate in managed:
         if storage_same_path(str(path), str(candidate)) or storage_path_within(path, candidate):
             return True

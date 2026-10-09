@@ -28,6 +28,9 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Validate desktop package metadata
         run: python -m json.tool desktop/package.json > /dev/null
+      - name: Resolve desktop dependency graph
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        working-directory: desktop
       - name: Check Electron process syntax
         run: |
           node --check desktop/main.cjs

@@ -1353,14 +1353,13 @@ def api_integrations_status():
 def api_integrations_check():
     data = request.get_json(force=True) or {}
     try:
-        update_config({
-            "ps5_ip": data.get("ps5_ip", CONFIG.get("ps5_ip", "")),
-            "ps5upload_engine_url": data.get("ps5upload_engine_url", CONFIG.get("ps5upload_engine_url", "http://127.0.0.1:19113")),
-        })
-        ps5_ip = private_lan_ip(CONFIG.get("ps5_ip"), allow_loopback=False) if CONFIG.get("ps5_ip") else ""
-        engine_url = validate_engine_url(CONFIG.get("ps5upload_engine_url"))
+        raw_ip = data.get("ps5_ip", CONFIG.get("ps5_ip", ""))
+        raw_engine_url = data.get("ps5upload_engine_url", CONFIG.get("ps5upload_engine_url", "http://127.0.0.1:19113"))
+        ps5_ip = private_lan_ip(raw_ip, allow_loopback=False) if str(raw_ip or "").strip() else ""
+        engine_url = validate_engine_url(raw_engine_url)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    update_config({"ps5_ip": ps5_ip, "ps5upload_engine_url": engine_url})
 
     idm_path = find_idm()
     result: dict[str, Any] = {

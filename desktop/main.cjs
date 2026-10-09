@@ -48,9 +48,11 @@ async function waitForServer() {
 ipcMain.handle("hermes:choose-file", async (_event, kind) => {
   const filters = kind === "executable"
     ? [{ name: "Windows applications", extensions: ["exe"] }]
-    : [{ name: "All files", extensions: ["*"] }];
+    : kind === "pkg"
+      ? [{ name: "PlayStation package", extensions: ["pkg"] }]
+      : [{ name: "All files", extensions: ["*"] }];
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
-    title: kind === "executable" ? "Choose application executable" : "Choose local transfer file",
+    title: kind === "executable" ? "Choose application executable" : kind === "pkg" ? "Choose a PKG file" : "Choose local transfer file",
     properties: ["openFile"],
     filters
   });

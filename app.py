@@ -1075,7 +1075,7 @@ def api_storage_scan():
 
     excluded = {
         "$RECYCLE.BIN", "SYSTEM VOLUME INFORMATION", ".GIT",
-        ".VEN V", "NODE_MODULES", "__PYCACHE__", ".NEXT",
+        ".VENV", "NODE_MODULES", "__PYCACHE__", ".NEXT",
         "WINDOWSAPPS", "WINSXS",
     }
     extensions: dict[str, dict[str, int]] = {}
@@ -1235,6 +1235,36 @@ def api_resolve():
             "cover_path": cover_path,
         }
     )
+
+
+@app.post("/api/resolve-from-browser")
+def api_resolve_from_browser():
+    data = request.get_json(force=True) or {}
+    ppsa = extract_ppsa(data.get("ppsa") or "")
+    if not ppsa:
+        return jsonify({"error": "Enter a valid PPSA, for example PPSA18089."}), 400
+
+    source_url = str(data.get("url") or "")
+    if urllib.parse.urlparse(source_url).hostname not in {"prosperopatches.com", "www.prosperopatches.com"}:
+        return jsonify({"error": "Metadata can only be imported from ProsperoPatches."}), 400
+
+    title = safe_name(str(data.get("title") or "").strip())
+    if not title or title.upper() == ppsa or len(title) > 150:
+        return jsonify({"error": "The browser page did not expose a usable game title."}), 400
+
+    preferred_cover = str(data.get("cover") or "").strip() or None
+    if preferred_cover and urllib.parse.urlparse(preferred_cover).scheme not in {"http", "https"}:
+        preferred_cover = None
+
+    _, cover_name = download_cover(title, ppsa, preferred_cover)
+    activity("Imported visible-browser metadata for " + ppsa + " → " + title)
+    return jsonify({
+        "title_id": ppsa,
+        "title": title,
+        "source": prosperopatches_url(ppsa),
+        "cover": cover_name,
+        "resolver": "visible-browser",
+    })
 
 
 @app.post("/api/open-folder")

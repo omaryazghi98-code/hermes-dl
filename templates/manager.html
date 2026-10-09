@@ -18,7 +18,7 @@
   <button class="active" data-page="overview"><span class="ico">◈</span>Overview</button>
   <button data-page="library"><span class="ico">▣</span>PS5 Library</button>
   <button data-page="browser"><span class="ico">◎</span>Browser</button>
-  <button data-page="storage"><span class="ico">▤</span>Storage scanner</button>
+  <button data-page="storage"><span class="ico">▤</span>D: Drive Manager</button>
   <button data-page="downloads"><span class="ico">⇩</span>Download center</button>
   <button data-page="console"><span class="ico">⌁</span>Console & transfers</button>
   <button data-page="payloads"><span class="ico">↗</span>Payload sender</button>
@@ -60,8 +60,25 @@
  </div>
 </section>
 <section class="page" id="page-storage">
- <div class="card"><div class="sectionhead"><h2>Storage inventory</h2><button class="primary" onclick="scanStorage()">Run read-only scan</button></div><div class="muted">The scanner inventories file paths and sizes. It does not move, rename, or delete anything. Large or duplicate-looking files are review candidates only.</div>
-  <div class="field"><label>Folder to scan</label><input id="scanRoot" value="D:\"></div><div class="field"><label>Maximum entries to inspect</label><input id="scanLimit" type="number" min="100" max="50000" value="10000"></div><div id="scanSummary" class="banner">No scan run yet.</div><div id="scanResults"></div>
+ <div class="card">
+  <div class="sectionhead"><h2>D: drive & configured-path health</h2><div class="actions"><button onclick="auditDrivePaths()">Audit paths</button><button class="primary" onclick="createMissingPaths()">Create missing folders</button></div></div>
+  <div class="muted">Checks configured folders and optional companion executables, shows drive space, and flags missing paths or duplicate folder targets. Creating folders never moves existing files; paths outside the selected drive are reported but not created.</div>
+  <div class="field"><label>Drive / folder to manage (D: is the default)</label><input id="scanRoot" value="D:\" spellcheck="false"></div>
+  <div id="driveHealthSummary" class="banner">Run the path audit to check the selected drive.</div>
+  <div id="pathAuditResults"></div>
+  <div id="toolAuditResults" class="grid2" style="margin-top:12px"></div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>Organize loose files</h2><div class="actions"><button onclick="previewOrganization()">Preview organization plan</button><button class="primary" onclick="moveSelectedOrganizerFiles()">Move selected files</button></div></div>
+  <div class="muted">Preview lists only recognized files directly inside the selected folder; it does not recurse into subfolders. All suggestions start unchecked. Directories, unknown files, RAR sets and recognized split archives are left alone. Selected files move into type-based folders under <code>_Organized</code>; existing destinations are never overwritten. Hermes' installation and configured staging folders are protected.</div>
+  <div id="organizeSummary" class="banner">Build a preview before moving anything.</div>
+  <div id="organizeResults"></div>
+ </div>
+ <div class="card" style="margin-top:14px">
+  <div class="sectionhead"><h2>Storage inventory</h2><button class="primary" onclick="scanStorage()">Run read-only scan</button></div>
+  <div class="muted">The recursive scanner inventories file paths, sizes, file types and possible duplicates. It is read-only and can be limited to avoid scanning the whole drive for too long.</div>
+  <div class="field"><label>Maximum entries to inspect</label><input id="scanLimit" type="number" min="100" max="50000" value="10000"></div>
+  <div id="scanSummary" class="banner">No scan run yet.</div><div id="scanResults"></div>
  </div>
 </section>
 <section class="page" id="page-downloads">
@@ -188,8 +205,8 @@
 </main></div>
 <script>
 const $=id=>document.getElementById(id);const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let cfg={},lastJobs=[];
-const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['Storage Scanner','Inventory your drive and review cleanup candidates safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],payloads:['Payload Sender','Manage a local payload playlist and send selected files to the PS5.'],settings:['Settings','Configure folders and companion applications.']};
-function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage')$('scanRoot').value=$('scanRoot').value||'D:\\';if(name==='payloads')loadPayloadWorkspace();}
+const pageInfo={overview:['Overview','Your downloads, games and storage at a glance.'],library:['PS5 Library','Recognize title IDs and manage your organized games.'],browser:['Integrated Browser','Use a visible browser to inspect websites and PS5 tools.'],storage:['D: Drive Manager','Audit configured paths, organize reviewed loose files, and inspect storage safely.'],downloads:['Download Center','Send direct links to IDM and monitor the archive pipeline.'],console:['Console & Transfers','Pair Orbit Store, connect PS5Upload and browse FTP.'],payloads:['Payload Sender','Manage a local payload playlist and send selected files to the PS5.'],settings:['Settings','Configure folders and companion applications.']};
+function go(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id==='page-'+name));document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('pageTitle').textContent=pageInfo[name][0];$('pageSub').textContent=pageInfo[name][1];if(name==='browser')setupBrowser();if(name==='storage'){setIfIdle('scanRoot','D:\\');auditDrivePaths()}if(name==='payloads')loadPayloadWorkspace();}
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
 async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...opts});const d=await r.json();if(!r.ok)throw Error(d.error||('Request failed '+r.status));return d}
 function bytes(n){n=Number(n||0);let u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
@@ -434,6 +451,87 @@ function navigateBrowser(){let u=$('browserUrl').value.trim();if(!/^https?:\/\//
 function browserBack(){try{$('webview').goBack()}catch(e){}}function browserForward(){try{$('webview').goForward()}catch(e){}}function browserReload(){try{$('webview').reload()}catch(e){}}
 function openPpsaInBrowser(){const id=$('ppsa').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!/^PPSA\d{5}$/.test(id)){alert('Enter a valid PPSA title ID first.');return}go('browser');$('browserUrl').value='https://prosperopatches.com/'+id;navigateBrowser()}
 async function useBrowserMetadata(){const w=$('webview');if(!w||typeof w.executeJavaScript!=='function'){alert('Open Hermes with launch-desktop.bat to use the integrated browser.');return}try{const meta=await w.executeJavaScript(`({title:(document.querySelector('meta[property="og:title"]')?.content||document.querySelector('h1')?.innerText||document.title).replace(/\\s*[|–—-]\\s*ProsperoPatches.*$/i,'').replace(/\\s*[|–—-]\\s*PPSA\\d{5}.*$/i,'').trim(),cover:document.querySelector('meta[property="og:image"]')?.content||document.querySelector('meta[name="twitter:image"]')?.content||null,url:location.href})`);const id=$('ppsa').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');if(!/^PPSA\d{5}$/.test(id))throw Error('Enter a valid PPSA title ID on the PS5 Library page first.');if(!meta.url.includes('prosperopatches.com'))throw Error('The current browser page is not ProsperoPatches.');const d=await api('/api/resolve-from-browser',{method:'POST',body:JSON.stringify({ppsa:id,title:meta.title,cover:meta.cover,url:meta.url})});$('resolved').innerHTML=(d.cover?'<img class="cover" style="float:left;margin:0 12px 8px 0" src="/covers/'+encodeURIComponent(d.cover)+'">':'')+'<strong>'+esc(d.title)+'</strong><br><span class="muted">'+esc(d.title_id)+'</span><p><a target="_blank" rel="noreferrer" href="'+esc(d.source)+'">ProsperoPatches source</a></p><div style="clear:both"></div>'}catch(e){alert(e.message)}}
+async function auditDrivePaths(){
+  const root=$('scanRoot').value.trim()||'D:\\';
+  const summary=$('driveHealthSummary'),host=$('pathAuditResults'),toolsHost=$('toolAuditResults');
+  summary.className='banner';summary.textContent='Checking drive space and configured paths…';
+  host.innerHTML='';toolsHost.innerHTML='';
+  try{
+    const d=await api('/api/storage/audit?root='+encodeURIComponent(root));
+    const drive=d.drive||{};
+    if(drive.error){
+      summary.className='banner error';summary.textContent='Drive information unavailable: '+drive.error;
+    }else{
+      const pct=drive.total?Math.round(drive.used*100/drive.total):0;
+      summary.className='banner good';
+      summary.innerHTML='<strong>'+esc(drive.path)+'</strong> · '+esc(bytes(drive.free))+' free of '+esc(bytes(drive.total))+' ('+pct+'% used)<div style="height:7px;background:#263243;border-radius:8px;overflow:hidden;margin-top:9px"><div style="height:100%;width:'+Math.min(100,pct)+'%;background:var(--accent)"></div></div>';
+    }
+    const pathStatusLabel={ready:'Ready',missing:'Missing','outside-selected-root':'Outside selected root','not-a-directory':'Not a directory','not-writable':'Not writable','protected-path':'Protected path','not-configured':'Not configured'};
+    host.innerHTML='<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Purpose</th><th>Configured path</th><th>Status</th></tr></thead><tbody>'+
+      (d.paths||[]).map(item=>{
+        const good=item.status==='ready';
+        return '<tr><td><strong>'+esc(item.label)+'</strong></td><td class="path">'+esc(item.path||'—')+'</td><td><span class="badge '+(good?'good':'warn')+'">'+esc(pathStatusLabel[item.status]||item.status)+'</span></td></tr>';
+      }).join('')+'</tbody></table></div>';
+    toolsHost.innerHTML=(d.tools||[]).map(item=>{
+      const good=item.status==='ready';
+      const label=item.status==='not-configured'?'Not configured':item.status==='not-found'?'Not detected':item.status==='missing'?'Path missing':'Ready';
+      return '<div class="card"><div class="sectionhead"><strong>'+esc(item.label)+'</strong><span class="badge '+(good?'good':'warn')+'">'+esc(label)+'</span></div><div class="muted path">'+esc(item.path||'No path configured')+'</div></div>';
+    }).join('');
+    if((d.duplicate_paths||[]).length){
+      host.innerHTML+='<div class="banner error">Two or more configured tasks point to the same folder:<br>'+d.duplicate_paths.map(item=>esc(item.first)+' / '+esc(item.second)+' → '+esc(item.path)).join('<br>')+'</div>';
+    }
+  }catch(e){summary.className='banner error';summary.textContent='Path audit failed: '+e.message}
+}
+async function createMissingPaths(){
+  const root=$('scanRoot').value.trim()||'D:\\';
+  if(!confirm('Create missing configured folders that are inside '+root+'? This creates directories only; it will not move, rename, overwrite or delete any files. Paths outside this scope or overlapping the Hermes installation will be skipped.'))return;
+  const summary=$('driveHealthSummary');summary.className='banner';summary.textContent='Creating only safe, missing configured directories…';
+  try{
+    const d=await api('/api/storage/paths/create-missing',{method:'POST',body:JSON.stringify({root})});
+    const created=(d.created||[]).map(item=>item.label+': '+item.path);
+    const skipped=(d.skipped||[]).map(item=>item.label+': '+(item.reason||'Skipped')+(item.path?' ('+item.path+')':''));
+    summary.className='banner '+(created.length?'good':'');
+    summary.innerHTML='<strong>Created '+created.length+' folder(s).</strong>'+
+      (created.length?'<div style="margin-top:6px">'+created.map(esc).join('<br>')+'</div>':'')+
+      (skipped.length?'<details style="margin-top:8px"><summary>Skipped / already ready ('+skipped.length+')</summary>'+skipped.map(esc).join('<br>')+'</details>':'');
+    await auditDrivePaths();
+  }catch(e){summary.className='banner error';summary.textContent='Folder repair failed: '+e.message}
+}
+async function previewOrganization(){
+  const root=$('scanRoot').value.trim()||'D:\\';
+  const summary=$('organizeSummary'),host=$('organizeResults');
+  summary.className='banner';summary.textContent='Building a preview of direct child files. No files will be moved…';host.innerHTML='';
+  try{
+    const d=await api('/api/storage/organize/preview',{method:'POST',body:JSON.stringify({root})});
+    const items=d.items||[];
+    summary.className='banner';
+    summary.innerHTML='<strong>'+items.length+' suggested move(s).</strong> '+esc(d.skipped_protected_or_ambiguous||0)+' ambiguous/protected item(s) skipped. '+esc(d.note||'No files moved.');
+    if(!items.length){host.innerHTML='<div class="empty">No recognized loose files to organize in this folder. Existing subfolders and their contents were left untouched.</div>';return}
+    host.innerHTML='<div class="tablewrap"><table><thead><tr><th>Select</th><th>File</th><th>Suggested category / destination</th><th>Size</th></tr></thead><tbody>'+
+      items.map(item=>{
+        const collision=!!item.collision;
+        return '<tr><td><input type="checkbox" class="organize-choice" data-filename="'+esc(item.filename)+'" '+(collision?'disabled':'')+' style="width:auto"></td><td><strong>'+esc(item.filename)+'</strong>'+(collision?'<div class="muted" style="color:var(--red)">Destination exists — selection disabled</div>':'')+'</td><td><span class="badge">'+esc(item.category)+'</span><div class="muted path">'+esc(item.destination)+'</div></td><td>'+esc(bytes(item.bytes))+'</td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }catch(e){summary.className='banner error';summary.textContent='Could not build the organization plan: '+e.message}
+}
+async function moveSelectedOrganizerFiles(){
+  const selected=[...document.querySelectorAll('.organize-choice:checked')].map(el=>el.dataset.filename);
+  if(!selected.length){alert('Select at least one file in the preview first. Nothing has been moved.');return}
+  const root=$('scanRoot').value.trim()||'D:\\';
+  const lines=selected.slice(0,8).join('\n')+(selected.length>8?'\n…and '+(selected.length-8)+' more':'');
+  if(!confirm('Move '+selected.length+' selected file(s) out of the current folder?\n\n'+lines+'\n\nThey will go to the previewed type folders under _Organized. Existing files will not be overwritten. Folders and unselected files will remain untouched.'))return;
+  const summary=$('organizeSummary');summary.className='banner';summary.textContent='Moving only the selected files…';
+  try{
+    const d=await api('/api/storage/organize/move-selected',{method:'POST',body:JSON.stringify({root,filenames:selected})});
+    const moved=(d.moved||[]).map(item=>item.filename+' → '+item.to);
+    const skipped=(d.skipped||[]).map(item=>item.filename+': '+item.reason);
+    summary.className='banner '+(moved.length?'good':skipped.length?'error':'');
+    summary.innerHTML='<strong>Moved '+moved.length+' file(s); skipped '+skipped.length+'.</strong>'+
+      (moved.length?'<div style="margin-top:6px">'+moved.map(esc).join('<br>')+'</div>':'')+
+      (skipped.length?'<details style="margin-top:8px" open><summary>Skipped items</summary>'+skipped.map(esc).join('<br>')+'</details>':'');
+    await Promise.all([auditDrivePaths(),previewOrganization()]);
+  }catch(e){summary.className='banner error';summary.textContent='Organization failed: '+e.message}
+}
 async function scanStorage(){const root=$('scanRoot').value.trim(),limit=Math.max(100,Math.min(50000,Number($('scanLimit').value)||10000));$('scanSummary').textContent='Scanning '+root+'… This may take a while.';$('scanResults').innerHTML='';try{const d=await api('/api/storage/scan',{method:'POST',body:JSON.stringify({root,limit})});$('scanSummary').innerHTML='<strong>'+esc(d.entries.toLocaleString())+'</strong> entries inspected · <strong>'+bytes(d.bytes)+'</strong> file data · '+esc(d.truncated?'Limit reached; scan is partial.':'Scan finished.')+'<br><span class="muted">Read-only inventory. No files changed.</span>';const ext=Object.entries(d.extensions||{}).sort((a,b)=>b[1].count-a[1].count).slice(0,20);const large=(d.large||[]).slice(0,30);$('scanResults').innerHTML='<div class="grid2" style="margin-top:12px"><div class="card"><h3>File types</h3><div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Extension</th><th>Files</th><th>Size</th></tr></thead><tbody>'+ext.map(x=>'<tr><td>'+esc(x[0])+'</td><td>'+x[1].count+'</td><td>'+bytes(x[1].bytes)+'</td></tr>').join('')+'</tbody></table></div></div><div class="card"><h3>Largest files</h3><div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>File</th><th>Size</th></tr></thead><tbody>'+large.map(x=>'<tr><td class="path">'+esc(x.path)+'</td><td>'+bytes(x.bytes)+'</td></tr>').join('')+'</tbody></table></div></div></div><div class="card" style="margin-top:12px"><h3>Possible duplicate candidates</h3><div class="muted" style="margin:6px 0 10px">Same filename and same size only. These are not confirmed duplicates; review paths and contents before doing anything.</div><div class="tablewrap"><table><thead><tr><th>Filename</th><th>Size</th><th>Locations</th></tr></thead><tbody>'+((d.duplicate_candidates||[]).map(x=>'<tr><td>'+esc(x.name)+' ('+esc(x.matches||x.paths.length)+' matches)</td><td>'+bytes(x.bytes)+'</td><td>'+x.paths.map(p=>'<div class="path">'+esc(p)+'</div>').join('')+'</td></tr>').join('')||'<tr><td colspan="3">No matching filename-and-size candidates found.</td></tr>')+'</tbody></table></div></div>'}catch(e){$('scanSummary').textContent='Scan failed: '+e.message}}
 $('browserUrl').addEventListener('keydown',e=>{if(e.key==='Enter')navigateBrowser()});
 async function init(){await refreshAll();renderTrackedPs5Jobs();setInterval(refreshAll,8000);setInterval(loadFtpJobs,2000);setInterval(refreshPs5Jobs,4000)}init();
